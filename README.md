@@ -2,6 +2,8 @@
 
 USB ID `1189:8890` の MINI KeyBoard を設定する Linux 用デスクトップアプリです。Go と Fyne で実装し、libusb で設定データを送信します。12キーと2つのノブに対応しています。
 
+![Key Short のキー・ノブ設定画面](docs/screenshot.png)
+
 ## 機能
 
 - キーと、各ノブの左回転・押下・右回転への割り当て。
