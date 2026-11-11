@@ -236,6 +236,8 @@ func (s *studio) edit(slot int) {
 		d.Hide()
 	})
 	add.Importance = widget.HighImportance
+	value.OnChanged = func(string) { validation.SetText("") }
+	value.OnSubmitted = func(string) { add.OnTapped() }
 	remove := widget.NewButton("書き込み対象から外す", func() { s.p.Remove(layer, slot); s.changed(); d.Hide() })
 	content := container.NewVBox(widget.NewForm(widget.NewFormItem("操作", kind), widget.NewFormItem("割り当て", value)), note, validation, container.NewHBox(remove, layout.NewSpacer(), add))
 	d = dialog.NewCustom(fmt.Sprintf("レイヤー %d / %s", layer, protocol.SlotName(slot)), "閉じる", content, s.w)
