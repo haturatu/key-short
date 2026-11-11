@@ -1,0 +1,10 @@
+.venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+bin/
+.pytest_cache/
+Release/
+t1.zip
