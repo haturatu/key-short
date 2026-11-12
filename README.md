@@ -1,6 +1,6 @@
 # Key Short
 
-USB ID `1189:8890` の MINI KeyBoard を設定する Linux 用デスクトップアプリです。Go と Fyne で実装し、libusb で設定データを送信します。12キーと2つのノブに対応しています。
+USB ID `1189:8890` の MINI KeyBoard を設定するデスクトップアプリです。Go と Fyne を使用し、Linux、Windows、macOS のネイティブ処理を実装しています。12キーと2つのノブに対応しています。
 
 ![Key Short のキー・ノブ設定画面](docs/screenshot.png)
 
@@ -17,10 +17,11 @@ USB ID `1189:8890` の MINI KeyBoard を設定する Linux 用デスクトップ
 - インストール済みアプリの選択、引数付きコマンドの実行。
 - 起動済みウィンドウの再利用と前面化。KDE Plasma の Wayland と X11 に対応。
 - USB ボタンの常駐監視、トレイ常駐、前回保存した JSON の復元。
+- A や Ctrl+PageUp などを実際に押して割り当てを記録。最大5操作の連続記録に対応。
 
 ## ビルド
 
-Go 1.24 以降、C コンパイラー、pkg-config、libusb、OpenGL、X11 の開発ライブラリーを使用します。Wayland 環境では XWayland を使用します。
+Go 1.26 以降と C コンパイラーを使用します。Windows/macOS の手順は [対応環境とビルド](docs/platforms.md) を参照してください。以下は Linux の手順です。Linux では pkg-config、libusb、OpenGL、X11 の開発ライブラリーを使用します。Wayland 環境では XWayland を使用します。
 
 Artix Linux / Arch Linux:
 
@@ -36,11 +37,11 @@ sudo apt install build-essential pkg-config libusb-1.0-0-dev libgl1-mesa-dev xor
 make build
 ```
 
-Debian / Ubuntu では Go 1.24 以降を別途用意してください。日本語の表示には Droid Sans Fallback または Noto Sans JP の TTF を使用します。別のフォントを使う場合は `FYNE_FONT=/path/to/font.ttf ./bin/key-short` として起動してください。
+Debian / Ubuntu では Go 1.26 以降を別途用意してください。日本語の表示には Droid Sans Fallback または Noto Sans JP の TTF を使用します。別のフォントを使う場合は `FYNE_FONT=/path/to/font.ttf ./bin/key-short` として起動してください。
 
 ## USB のアクセス権限
 
-最初に udev ルールをインストールし、USB デバイスを抜き差しします。
+Linux では最初に udev ルールをインストールし、USB デバイスを抜き差しします。Windows/macOS では udev を使用しません。
 
 ```sh
 sudo ./scripts/install-udev.sh
@@ -74,6 +75,17 @@ make install
 ```
 
 実行ファイルは `~/.local/bin/key-short`、デスクトップエントリーは `${XDG_DATA_HOME:-~/.local/share}/applications/key-short.desktop` に配置されます。
+
+## キー入力から割り当てを記録する
+
+1. キーの編集画面で操作を「キーボード」にし、「キー入力から記録…」を押します。
+2. 記録欄にフォーカスがある状態で、割り当てたいキーを押します。A は `a`、Ctrl を押しながら PageUp を押すと `ctrl+pageup` と表示します。
+3. 「割り当てに取り込む」を押すと、編集画面の割り当て欄へ反映します。
+4. 「設定に追加」から JSON の保存と USB への書き込みへ進みます。
+
+「連続操作を記録」を有効にすると最大5操作を順に記録します。長押しのリピートは追加しません。修飾キーの左右を区別し、修飾キーだけでは操作を確定しません。記録欄からフォーカスが外れると一時停止します。OS が予約するショートカットは取得できない場合があります。入力はログへ出力しません。
+
+![Ctrl と PageUp のキー記録画面](docs/key-recording.png)
 
 ## アプリランチャー
 
@@ -177,7 +189,9 @@ USB を使わず、指定スロットの起動・前面化を実行する場合:
 
 この環境では `1189:8890` の接続と USB ディスクリプターを確認しています。本体への設定書き込みと、12キー・2ノブの操作結果は未検証です。USB のアクセス権限を付与してから実機で確認してください。レイヤー2・3や LED の対応状況はファームウェアによって異なります。
 
-ランチャーは、KDE Plasma の Wayland セッションでテスト用アプリの起動と前面化を確認しました。X11 バックエンドも XWayland 上のテスト用ウィンドウで確認しています。現在は USB デバイスが未接続のため、物理ボタンからの起動は未検証です。
+Windows/macOS は HIDAPI で設定用 HID インターフェースに Report ID 3 を送信します。Windows は Raw Input / Win32、macOS は IOHIDManager / AppKit / Accessibility のランチャー処理を実装しています。各 OS の CI でビルドと自動テストを確認しますが、Windows/macOS の USB 実機動作は未検証です。
+
+ランチャーは、KDE Plasma の Wayland セッションでテスト用アプリの起動と前面化を確認しました。X11 バックエンドも XWayland 上のテスト用ウィンドウで確認しています。物理ボタンからの起動は未検証です。
 
 本体の現在の割り当てを読み出す機能はありません。送信成功は USB 転送の完了を表し、保存内容を読み戻して照合した結果ではありません。途中で通信が失敗すると一部だけ設定されることがあります。その場合は接続し直し、JSON から再送信してください。
 
@@ -199,6 +213,8 @@ make build
 ```
 
 テストでは提供された Windows 版の送信形式と期待するフレームを照合し、複数操作、ノブ2、レイヤー、LED の保存コマンド、不正な入力、JSON の保存・読み込みを検証します。テストは USB に設定を書き込みません。
+
+GitHub Actions は3 OS の vet・テスト・ネイティブビルドを実行します。Linux では整形、モジュール整合性、競合検出、脆弱性検査も行います。Dependabot は Go Modules と GitHub Actions の更新を毎週金曜 09:00（Asia/Tokyo）に確認します。[CI の構成と調査結果](docs/ci.md) を参照してください。
 
 ランチャーのテストでは、引数と引用符の保持、起動履歴の永続化、PID の再利用、連打、入力イベント、監視プロセスの排他、GUI からの設定を検証します。通常のテストは実際のアプリを起動しません。
 
