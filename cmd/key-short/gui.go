@@ -32,7 +32,7 @@ type studio struct {
 	w                                      fyne.Window
 	p                                      profile.Profile
 	layer                                  int
-	buttons                                []*widget.Button
+	buttons                                []*assignmentButton
 	status, count                          *widget.Label
 	devices, led                           *widget.Select
 	progress                               *widget.ProgressBar
@@ -63,6 +63,8 @@ type studio struct {
 	usbFailed                              bool
 	deviceInfos                            []device.Info
 	monitorGeneration                      uint64
+	dragTarget                             int
+	keyScroll                              *container.Scroll
 }
 
 func runGUI(profilePath string) error {
@@ -118,8 +120,7 @@ func newStudio(a fyne.App) *studio {
 	})
 	s.layers.SetSelectedIndex(0)
 	for slot := 1; slot <= 18; slot++ {
-		n := slot
-		b := widget.NewButton("", func() { s.edit(n) })
+		b := newAssignmentButton(s, slot)
 		s.buttons = append(s.buttons, b)
 		s.controls = append(s.controls, b)
 	}
@@ -157,14 +158,15 @@ func newStudio(a fyne.App) *studio {
 	})
 	s.led.SetSelectedIndex(0)
 	launchControls := s.launcherControls()
-	note := widget.NewLabel("配置の変更だけでは USB に書き込みません。キー番号と実機の対応を確認してください。")
+	note := widget.NewLabel("割り当てをドラッグして別のキーへ移動できます。配置の変更だけでは USB に書き込みません。")
 	note.Wrapping = fyne.TextWrapWord
 	s.layoutNote = widget.NewLabel("機種未確定 · 配置を選択してください。")
 	s.layoutNote.Wrapping = fyne.TextWrapWord
 	keyArea := container.NewVBox(widget.NewLabelWithStyle("キー配置", fyne.TextAlignLeading, fyne.TextStyle{Bold: true}), s.layouts, custom, s.layoutNote, note, s.keyHost,
 		widget.NewAccordion(widget.NewAccordionItem("LED・ランチャー設定", container.NewVBox(widget.NewLabel("LED"), s.led, launchControls))))
 	s.editorHost = container.NewVBox()
-	split := container.NewHSplit(container.NewPadded(container.NewVScroll(keyArea)), container.NewPadded(container.NewVScroll(s.editorHost)))
+	s.keyScroll = container.NewVScroll(keyArea)
+	split := container.NewHSplit(container.NewPadded(s.keyScroll), container.NewPadded(container.NewVScroll(s.editorHost)))
 	split.Offset = 0.48
 	open := widget.NewButtonWithIcon("JSON を開く", theme.FolderOpenIcon(), s.open)
 	s.saveButton = widget.NewButtonWithIcon("保存", theme.DocumentSaveIcon(), s.save)
@@ -261,6 +263,9 @@ func (s *studio) refresh() {
 		b.Importance = widget.MediumImportance
 		if s.selectedSlot == i+1 {
 			b.Importance = widget.HighImportance
+		}
+		if s.dragTarget == i+1 {
+			b.Importance = widget.SuccessImportance
 		}
 		b.Refresh()
 	}
