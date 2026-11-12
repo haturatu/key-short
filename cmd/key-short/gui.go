@@ -21,6 +21,7 @@ import (
 	"key-short/internal/launcher"
 	"key-short/internal/profile"
 	"key-short/internal/protocol"
+	"key-short/packaging"
 )
 
 type studio struct {
@@ -56,12 +57,14 @@ func runGUI(profilePath string) error {
 		}
 	}
 	a := app.NewWithID("io.keyshort.configurator")
+	a.SetIcon(fyne.NewStaticResource("key-short.svg", packaging.Icon))
 	s := newStudio(a)
 	defer s.shutdown()
 	if profilePath != "" {
 		if err := s.loadProfile(profilePath); err != nil {
 			return err
 		}
+		a.Preferences().SetBool("launcher-enabled", false)
 	}
 	if a.Preferences().Bool("launcher-enabled") {
 		s.startMonitoring()

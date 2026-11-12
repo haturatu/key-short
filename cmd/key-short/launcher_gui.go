@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"path/filepath"
 	"strings"
 
 	"fyne.io/fyne/v2"
@@ -42,7 +43,9 @@ func (s *studio) launcherControls() fyne.CanvasObject {
 	s.resident = widget.NewCheck("閉じてもトレイに常駐", func(v bool) { s.app.Preferences().SetBool("resident", v) })
 	s.resident.SetChecked(s.app.Preferences().Bool("resident"))
 	if a, ok := s.app.(fynedesktop.App); ok {
-		a.SetSystemTrayMenu(fyne.NewMenu("Key Short", fyne.NewMenuItem("設定画面を開く", func() { s.w.Show(); s.w.RequestFocus() }), fyne.NewMenuItem("監視を停止", s.stopMonitoring), fyne.NewMenuItem("終了", func() { s.requestClose(true) })))
+		quit := fyne.NewMenuItem("終了", func() { s.requestClose(true) })
+		quit.IsQuit = true
+		a.SetSystemTrayMenu(fyne.NewMenu("Key Short", fyne.NewMenuItem("設定画面を開く", func() { s.w.Show(); s.w.RequestFocus() }), fyne.NewMenuItem("監視を停止", s.stopMonitoring), quit))
 	} else {
 		s.resident.Disable()
 	}
@@ -106,6 +109,10 @@ func (s *studio) shutdown() {
 }
 
 func (s *studio) loadProfile(path string) error {
+	path, err := filepath.Abs(path)
+	if err != nil {
+		return err
+	}
 	p, err := profile.Load(path)
 	if err != nil {
 		return err
