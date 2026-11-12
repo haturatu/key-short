@@ -7,6 +7,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -31,8 +32,13 @@ func main(){a:=app.New();w:=a.NewWindow("Key Short process tracking verification
 	if out, err := build.CombinedOutput(); err != nil {
 		t.Fatalf("helper build: %s %v", out, err)
 	}
-	for _, backend := range []string{"kwin", "x11"} {
-		t.Run(backend, func(t *testing.T) {
+	desktopPath := filepath.Join(dir, "helper.desktop")
+	if err := os.WriteFile(desktopPath, []byte("[Desktop Entry]\nType=Application\nName=Key Short Test\nExec="+strconv.Quote(helper)+"\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"kwin-command", "x11-command", "kwin-application", "x11-application"} {
+		t.Run(name, func(t *testing.T) {
+			backend, mode, _ := strings.Cut(name, "-")
 			t.Setenv("KEY_SHORT_WINDOW_BACKEND", backend)
 			stateDir := t.TempDir()
 			m, err := New(stateDir)
@@ -41,6 +47,11 @@ func main(){a:=app.New();w:=a.NewWindow("Key Short process tracking verification
 			}
 			defer m.Close()
 			spec := protocol.LaunchSpec{Mode: "command", Command: strconv.Quote(helper), ReuseWindow: true}
+			if mode == "application" {
+				spec.Mode = mode
+				spec.Command = ""
+				spec.DesktopFile = desktopPath
+			}
 			ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 			defer cancel()
 			result, err := m.Run(ctx, spec)
@@ -56,8 +67,17 @@ func main(){a:=app.New();w:=a.NewWindow("Key Short process tracking verification
 				t.Fatal(err)
 			}
 			defer func() {
-				if p, err := os.FindProcess(r.Root.PID); err == nil {
-					p.Kill()
+				for _, ref := range r.Windows {
+					if alive(ref.Process) {
+						if p, err := os.FindProcess(ref.Process.PID); err == nil {
+							p.Kill()
+						}
+					}
+				}
+				if alive(r.Root) {
+					if p, err := os.FindProcess(r.Root.PID); err == nil {
+						p.Kill()
+					}
 				}
 			}()
 			if len(r.Windows) != 1 {
@@ -72,7 +92,7 @@ func main(){a:=app.New();w:=a.NewWindow("Key Short process tracking verification
 			if err != nil || !result.Focused || result.Started {
 				t.Fatalf("persistent focus: %+v %v", result, err)
 			}
-			if !alive(r.Root) {
+			if !alive(r.Windows[0].Process) {
 				t.Fatal("tracked process unexpectedly exited")
 			}
 		})
