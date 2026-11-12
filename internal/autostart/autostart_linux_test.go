@@ -367,3 +367,17 @@ func TestProfileAliasCannotOverwriteStartupMetadata(t *testing.T) {
 		t.Fatal("overwrote user profile through alias")
 	}
 }
+
+func TestFixedExecShimPassesArgumentsWithoutExpansion(t *testing.T) {
+	m, _ := fixture(t)
+	executable := filepath.Join(m.Home, `binary $HOME %f \ " = literal`)
+	script := "#!/bin/sh\nprintf '%s\\n' \"$@\"\n"
+	if err := writeFile(executable, []byte(script), 0700); err != nil {
+		t.Fatal(err)
+	}
+	value := `path $HOME $(touch should-not-exist) %f \ " = literal`
+	out, err := exec.Command("/bin/sh", "-c", `exec "$@"`, "key-short", executable, "-daemon", value).Output()
+	if err != nil || string(out) != "-daemon\n"+value+"\n" {
+		t.Fatal("shim expanded or lost arguments", string(out), err)
+	}
+}

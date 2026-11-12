@@ -149,6 +149,10 @@ func desktopArg(s string) string {
 	s = strings.NewReplacer("\\", "\\\\", "\"", "\\\"", "`", "\\`", "$", "\\$", "%", "%%").Replace(s)
 	return "\"" + strings.ReplaceAll(s, "\\", "\\\\") + "\""
 }
+
+// A fixed shell executable accepts paths that systemd prohibits as argv[0].
+// The script is constant; every path is a separate argument to exec "$@".
+// exec preserves the main PID and never evaluates user-provided shell text.
 func (m *Manager) unit(c Config) []byte {
 	return []byte(fmt.Sprintf(`[Unit]
 Description=Key Short launcher monitor
@@ -158,7 +162,7 @@ After=graphical-session-pre.target
 [Service]
 Type=simple
 WorkingDirectory=%%h
-ExecStart=%s -daemon %s -daemon-state %s
+ExecStart=/bin/sh -c %s key-short %s -daemon %s -daemon-state %s
 Restart=on-failure
 RestartSec=5s
 TimeoutStopSec=20s
@@ -170,17 +174,17 @@ SyslogIdentifier=key-short
 
 [Install]
 WantedBy=graphical-session.target
-`, unitArg(m.Binary), unitArg(c.Profile), unitArg(c.StateDir)))
+`, unitArg(`exec "$@"`), unitArg(m.Binary), unitArg(c.Profile), unitArg(c.StateDir)))
 }
 func (m *Manager) desktop(c Config) []byte {
 	return []byte(fmt.Sprintf(`[Desktop Entry]
 Type=Application
 Name=Key Short Launcher
 Comment=マクロパッドからのアプリ起動を監視
-Exec=%s -daemon %s -daemon-state %s -daemon-logs
+Exec=/bin/sh -c %s key-short %s -daemon %s -daemon-state %s -daemon-logs
 Terminal=false
 StartupNotify=false
-`, desktopArg(m.Binary), desktopArg(c.Profile), desktopArg(c.StateDir)))
+`, desktopArg(`exec "$@"`), desktopArg(m.Binary), desktopArg(c.Profile), desktopArg(c.StateDir)))
 }
 func (m *Manager) systemdAvailable(ctx context.Context) bool {
 	return m.Systemctl(ctx, "show-environment") == nil
@@ -475,7 +479,7 @@ func (m *Manager) InstallApp(binary string, icon []byte) error {
 	if err = writeFile(filepath.Join(m.DataHome, "icons", "hicolor", "scalable", "apps", "key-short.svg"), icon, 0644); err != nil {
 		return err
 	}
-	desktop := fmt.Sprintf("[Desktop Entry]\nType=Application\nName=Key Short\nComment=MINI KeyBoard のキーとノブを設定\nExec=%s\nIcon=key-short\nTerminal=false\nCategories=Settings;HardwareSettings;\nStartupNotify=true\n", desktopArg(m.Binary))
+	desktop := fmt.Sprintf("[Desktop Entry]\nType=Application\nName=Key Short\nComment=MINI KeyBoard のキーとノブを設定\nExec=/bin/sh -c %s key-short %s\nIcon=key-short\nTerminal=false\nCategories=Settings;HardwareSettings;\nStartupNotify=true\n", desktopArg(`exec "$@"`), desktopArg(m.Binary))
 	return writeFile(filepath.Join(m.DataHome, "applications", "key-short.desktop"), []byte(desktop), 0644)
 }
 
