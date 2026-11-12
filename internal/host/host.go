@@ -4,12 +4,11 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
-	"os"
 	"path/filepath"
 	"sync"
 	"time"
 
-	"golang.org/x/sys/unix"
+	"key-short/internal/filelock"
 	"key-short/internal/input"
 	"key-short/internal/launcher"
 	"key-short/internal/profile"
@@ -42,12 +41,11 @@ func start(parent context.Context, p profile.Profile, manager *launcher.Manager,
 	if len(bindings) == 0 {
 		return nil, fmt.Errorf("アプリ起動またはコマンド実行の割り当てを追加してください")
 	}
-	lock, err := os.OpenFile(filepath.Join(manager.StateDir(), "listener.lock"), os.O_CREATE|os.O_RDWR, 0600)
+	lock, locked, err := filelock.Acquire(filepath.Join(manager.StateDir(), "listener.lock"))
 	if err != nil {
 		return nil, err
 	}
-	if err = unix.Flock(int(lock.Fd()), unix.LOCK_EX|unix.LOCK_NB); err != nil {
-		lock.Close()
+	if !locked {
 		return nil, fmt.Errorf("別の Key Short がランチャーを監視中です")
 	}
 	ctx, cancel := context.WithCancel(parent)
@@ -57,17 +55,21 @@ func start(parent context.Context, p profile.Profile, manager *launcher.Manager,
 	go func() {
 		defer close(done)
 		defer lock.Close()
-		defer unix.Flock(int(lock.Fd()), unix.LOCK_UN)
 		monitorDone := make(chan struct{})
 		go func() {
 			defer close(monitorDone)
-			_ = monitor(ctx, func(c input.Chord) {
+			monitorErr := monitor(ctx, func(c input.Chord) {
 				select {
 				case events <- c:
 				default:
 					slog.Warn("ランチャーの入力が多すぎるためスキップしました")
 				}
 			}, status)
+			if monitorErr != nil && ctx.Err() == nil {
+				slog.Error("入力監視に失敗しました", "error", monitorErr)
+				status(monitorErr.Error())
+				cancel()
+			}
 		}()
 		last := map[input.Chord]time.Time{}
 		for {

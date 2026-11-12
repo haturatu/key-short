@@ -3,9 +3,8 @@ package protocol
 import (
 	"fmt"
 	"path/filepath"
+	"runtime"
 	"strings"
-
-	"github.com/mattn/go-shellwords"
 )
 
 type LaunchSpec struct {
@@ -20,17 +19,14 @@ type LaunchSpec struct {
 // CommandArgs supports quotes, but deliberately does not invoke a shell or
 // expand environment variables, globs, or command substitutions.
 func CommandArgs(command string) ([]string, error) {
-	p := shellwords.NewParser()
-	p.ParseEnv = false
-	p.ParseBacktick = false
-	args, err := p.Parse(command)
+	args, stopped, err := parseCommand(command)
 	if err != nil {
 		return nil, fmt.Errorf("コマンドの引用符などを確認してください: %w", err)
 	}
 	if len(args) == 0 || args[0] == "" {
 		return nil, fmt.Errorf("実行するコマンドを入力してください")
 	}
-	if p.Position >= 0 {
+	if stopped {
 		return nil, fmt.Errorf("パイプや複数コマンドには sh -c '…' を明示してください")
 	}
 	return args, nil
@@ -39,8 +35,16 @@ func CommandArgs(command string) ([]string, error) {
 func (s LaunchSpec) Validate() error {
 	switch s.Mode {
 	case "application":
-		if !filepath.IsAbs(s.DesktopFile) || !strings.HasSuffix(s.DesktopFile, ".desktop") {
-			return fmt.Errorf("アプリ一覧から .desktop ファイルを選択してください")
+		ext := strings.ToLower(filepath.Ext(s.DesktopFile))
+		valid := ext == ".desktop"
+		if runtime.GOOS == "windows" {
+			valid = ext == ".lnk" || ext == ".exe"
+		}
+		if runtime.GOOS == "darwin" {
+			valid = ext == ".app"
+		}
+		if !filepath.IsAbs(s.DesktopFile) || !valid {
+			return fmt.Errorf("この OS のアプリ一覧からアプリを選択してください")
 		}
 		if s.Command != "" {
 			return fmt.Errorf("アプリ選択とコマンドは同時に指定できません")

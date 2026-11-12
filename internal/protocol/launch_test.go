@@ -3,10 +3,14 @@ package protocol
 import (
 	"bytes"
 	"reflect"
+	"runtime"
 	"testing"
 )
 
 func TestCommandLinePreservesArguments(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("POSIX command line rules")
+	}
 	args, err := CommandArgs(`chromium --remote-allow-origins=* --remote-debugging-port=9222 --user-data-dir="/tmp/debug profile"`)
 	want := []string{"chromium", "--remote-allow-origins=*", "--remote-debugging-port=9222", "--user-data-dir=/tmp/debug profile"}
 	if err != nil || !reflect.DeepEqual(args, want) {

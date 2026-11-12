@@ -8,7 +8,6 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"log/slog"
 	"os"
@@ -18,8 +17,8 @@ import (
 	"sync"
 	"time"
 
-	"golang.org/x/sys/unix"
 	"key-short/internal/desktop"
+	"key-short/internal/filelock"
 	"key-short/internal/protocol"
 	"key-short/internal/window"
 )
@@ -47,13 +46,9 @@ type Manager struct {
 }
 
 func StateDir() (string, error) {
-	root := os.Getenv("XDG_STATE_HOME")
-	if root == "" {
-		home, err := os.UserHomeDir()
-		if err != nil {
-			return "", err
-		}
-		root = filepath.Join(home, ".local/state")
+	root, err := stateRoot()
+	if err != nil {
+		return "", err
 	}
 	return filepath.Join(root, "key-short"), nil
 }
@@ -110,11 +105,6 @@ func startProcess(args []string, dir string, token string) (process, <-chan erro
 	return p, done, nil
 }
 
-func session() string {
-	boot, _ := os.ReadFile("/proc/sys/kernel/random/boot_id")
-	return strings.TrimSpace(string(boot)) + "|" + os.Getenv("XDG_SESSION_ID") + "|" + os.Getenv("DISPLAY") + "|" + os.Getenv("WAYLAND_DISPLAY")
-}
-
 func signature(spec protocol.LaunchSpec) string {
 	spec.ReuseWindow = false
 	data, _ := json.Marshal(spec)
@@ -127,24 +117,20 @@ func (m *Manager) Run(ctx context.Context, spec protocol.LaunchSpec) (Result, er
 		return Result{}, err
 	}
 	key := signature(spec)
-	lock, err := os.OpenFile(filepath.Join(m.stateDir, key+".lock"), os.O_CREATE|os.O_RDWR, 0600)
+	lock, locked, err := filelock.Acquire(filepath.Join(m.stateDir, key+".lock"))
 	if err != nil {
 		return Result{}, err
 	}
 	defer lock.Close()
-	if err = unix.Flock(int(lock.Fd()), unix.LOCK_EX|unix.LOCK_NB); err != nil {
-		if errors.Is(err, unix.EWOULDBLOCK) {
-			return Result{Message: "このアプリは起動処理中です", Pending: true}, nil
-		}
-		return Result{}, err
+	if !locked {
+		return Result{Message: "このアプリは起動処理中です", Pending: true}, nil
 	}
-	defer unix.Flock(int(lock.Fd()), unix.LOCK_UN)
 	args, err := protocol.CommandArgs(spec.Command)
 	var app desktop.Application
 	if spec.Mode == "application" {
 		app, err = desktop.Read(spec.DesktopFile)
 		if err == nil {
-			args = []string{"gio", "launch", spec.DesktopFile}
+			args, err = desktop.Command(app)
 		}
 	}
 	if err != nil {
@@ -269,8 +255,14 @@ func findWindow(wins []window.Window, r record, spec protocol.LaunchSpec, app de
 		}
 		// A command may hand off to an already running application and exit.
 		// Adopt only a newly created window, never an arbitrary existing one.
-		if baseline != nil && !baseline[w.ID] && spec.Mode == "command" && strings.EqualFold(w.Class, filepath.Base(args[0])) {
-			return w, true
+		if baseline != nil && !baseline[w.ID] && spec.Mode == "command" {
+			name := filepath.Base(args[0])
+			if strings.EqualFold(filepath.Ext(name), ".exe") {
+				name = strings.TrimSuffix(name, filepath.Ext(name))
+			}
+			if strings.EqualFold(w.Class, name) || strings.EqualFold(w.AppID, name) || strings.HasSuffix(strings.ToLower(w.AppID), "."+strings.ToLower(name)) {
+				return w, true
+			}
 		}
 	}
 	return window.Window{}, false
