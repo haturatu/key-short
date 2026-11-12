@@ -1,0 +1,29 @@
+{
+  "version": 1,
+  "device": "1189:8890",
+  "led": null,
+  "bindings": [
+    {
+      "layer": 1,
+      "slot": 1,
+      "kind": "launcher",
+      "value": "Chromium",
+      "launch": {
+        "mode": "command",
+        "command": "chromium",
+        "reuse_window": true
+      }
+    },
+    {
+      "layer": 1,
+      "slot": 2,
+      "kind": "launcher",
+      "value": "Chromium · Debug 9222",
+      "launch": {
+        "mode": "command",
+        "command": "chromium --remote-allow-origins=http://localhost:9222 --remote-debugging-port=9222 --user-data-dir=/tmp/key-short-chromium-debug",
+        "reuse_window": true
+      }
+    }
+  ]
+}

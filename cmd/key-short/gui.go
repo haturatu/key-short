@@ -1,11 +1,13 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"log/slog"
 	"os"
 	"sort"
 	"strings"
+	"sync"
 
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/app"
@@ -16,6 +18,7 @@ import (
 	"fyne.io/fyne/v2/theme"
 	"fyne.io/fyne/v2/widget"
 	"key-short/internal/device"
+	"key-short/internal/launcher"
 	"key-short/internal/profile"
 	"key-short/internal/protocol"
 )
@@ -30,9 +33,19 @@ type studio struct {
 	progress      *widget.ProgressBar
 	controls      []fyne.Disableable
 	dirty, busy   bool
+	app           fyne.App
+	ctx           context.Context
+	cancel        context.CancelFunc
+	launchManager *launcher.Manager
+	launchWG      sync.WaitGroup
+	monitorStop   func()
+	monitorButton *widget.Button
+	monitorStatus *widget.Label
+	resident      *widget.Check
+	closing       bool
 }
 
-func runGUI() error {
+func runGUI(profilePath string) error {
 	// Fyne uses a single font; prefer a Japanese-capable system TTF.
 	if os.Getenv("FYNE_FONT") == "" {
 		for _, path := range []string{"/usr/share/fonts/droid/DroidSansFallbackFull.ttf", "/usr/share/fonts/truetype/droid/DroidSansFallbackFull.ttf", "/usr/share/fonts/truetype/noto/NotoSansJP-Regular.ttf"} {
@@ -44,12 +57,22 @@ func runGUI() error {
 	}
 	a := app.NewWithID("io.keyshort.configurator")
 	s := newStudio(a)
+	defer s.shutdown()
+	if profilePath != "" {
+		if err := s.loadProfile(profilePath); err != nil {
+			return err
+		}
+	}
+	if a.Preferences().Bool("launcher-enabled") {
+		s.startMonitoring()
+	}
 	s.w.ShowAndRun()
 	return nil
 }
 
 func newStudio(a fyne.App) *studio {
-	s := &studio{w: a.NewWindow("Key Short · MINI KeyBoard"), p: profile.New(), layer: 1}
+	ctx, cancel := context.WithCancel(context.Background())
+	s := &studio{app: a, ctx: ctx, cancel: cancel, w: a.NewWindow("Key Short · MINI KeyBoard"), p: profile.New(), layer: 1}
 	s.w.Resize(fyne.NewSize(1100, 780))
 	s.status = widget.NewLabel("割り当てを追加し、JSON に保存するか USB に書き込んでください。")
 	s.status.Wrapping = fyne.TextWrapWord
@@ -94,8 +117,8 @@ func newStudio(a fyne.App) *studio {
 	s.controls = append(s.controls, s.led)
 	help := widget.NewLabel("12キー / 2ノブ\n\nキーとノブは同じ方法で設定できます。\n\nショートカット: ctrl+shift+s\n連続操作: ctrl+c,ctrl+v\n最大5操作 / F1〜F24 対応\n\n未設定の項目は書き込みません。\n本体の現在の割り当ては読み出せません。\n\nLED の見え方やレイヤー対応は\nファームウェアにより異なります。")
 	help.Wrapping = fyne.TextWrapWord
-	side := container.NewVBox(widget.NewLabelWithStyle("MINI KeyBoard", fyne.TextAlignLeading, fyne.TextStyle{Bold: true}), widget.NewLabel("1189:8890 · CH57x"), widget.NewSeparator(), help, widget.NewSeparator(), widget.NewLabel("LED"), s.led)
-	split := container.NewHSplit(container.NewPadded(keyArea), container.NewPadded(side))
+	side := container.NewVBox(widget.NewLabelWithStyle("MINI KeyBoard", fyne.TextAlignLeading, fyne.TextStyle{Bold: true}), widget.NewLabel("1189:8890 · CH57x"), widget.NewSeparator(), s.launcherControls(), widget.NewSeparator(), help, widget.NewSeparator(), widget.NewLabel("LED"), s.led)
+	split := container.NewHSplit(container.NewPadded(container.NewVScroll(keyArea)), container.NewPadded(container.NewVScroll(side)))
 	split.Offset = 0.68
 	open := widget.NewButtonWithIcon("JSON を開く", theme.FolderOpenIcon(), s.open)
 	save := widget.NewButtonWithIcon("JSON に保存", theme.DocumentSaveIcon(), s.save)
@@ -113,29 +136,56 @@ func newStudio(a fyne.App) *studio {
 			dialog.ShowInformation("送信中", "USB への送信完了を待ってください。", s.w)
 			return
 		}
-		if s.dirty {
-			dialog.ShowConfirm("未保存の設定", "JSON に保存していない変更があります。終了しますか？", func(ok bool) {
-				if ok {
-					s.w.SetCloseIntercept(nil)
-					s.w.Close()
-				}
-			}, s.w)
-			return
-		}
-		s.w.SetCloseIntercept(nil)
-		s.w.Close()
+		s.requestClose(false)
 	})
 	s.refresh()
 	s.scan()
+	if path := a.Preferences().String("profile-path"); path != "" {
+		if err := s.loadProfile(path); err != nil {
+			s.status.SetText("前回の JSON を読み込めません: " + err.Error())
+		}
+	}
 	return s
 }
 
-func (s *studio) changed() { s.dirty = true; s.refresh() }
+func (s *studio) requestClose(force bool) {
+	if s.busy {
+		s.w.Show()
+		dialog.ShowInformation("送信中", "USB への送信完了を待ってください。", s.w)
+		return
+	}
+	if !force && s.monitorStop != nil && s.resident.Checked {
+		s.w.Hide()
+		return
+	}
+	if s.dirty {
+		dialog.ShowConfirm("未保存の設定", "JSON に保存していない変更があります。終了しますか？", func(ok bool) {
+			if ok {
+				s.shutdown()
+				s.w.SetCloseIntercept(nil)
+				s.app.Quit()
+			}
+		}, s.w)
+		return
+	}
+	s.shutdown()
+	s.w.SetCloseIntercept(nil)
+	s.app.Quit()
+}
+
+func (s *studio) changed() {
+	if s.monitorStop != nil {
+		s.stopMonitoring()
+		s.monitorStatus.SetText("設定を変更したため停止しました。USB 書き込み後に監視を再開してください。")
+	}
+	s.dirty = true
+	s.refresh()
+}
 func (s *studio) refresh() {
 	for i, b := range s.buttons {
 		value := "未設定"
 		if binding, ok := s.p.Get(s.layer, i+1); ok {
-			value = binding.Value
+			value = binding.DisplayValue()
 		}
 		if runes := []rune(value); len(runes) > 24 {
 			value = string(runes[:23]) + "…"
@@ -196,10 +246,23 @@ func sortedNames[T any](m map[string]T) []string {
 func (s *studio) edit(slot int) {
 	layer := s.layer
 	value := widget.NewSelectEntry(nil)
-	kind := widget.NewSelect([]string{"キーボード", "メディア", "マウス"}, nil)
+	kind := widget.NewSelect([]string{"キーボード", "メディア", "マウス", "ランチャー"}, nil)
+	existing, _ := s.p.Get(layer, slot)
+	launchLabel := ""
+	if existing.Kind == "launcher" {
+		launchLabel = existing.Value
+	}
+	launchFields := s.newLaunchEditor(existing.Launch, launchLabel)
+	var d dialog.Dialog
+	var content *fyne.Container
+	launchFields.box.Hide()
+	valueForm := widget.NewForm(widget.NewFormItem("割り当て", value))
 	note := widget.NewLabel("")
 	note.Wrapping = fyne.TextWrapWord
 	kind.OnChanged = func(v string) {
+		launchFields.box.Hide()
+		valueForm.Show()
+		note.Show()
 		switch v {
 		case "キーボード":
 			value.SetOptions([]string{"ctrl+c", "ctrl+v", "ctrl+shift+s", "super+e", "f13", "f14", "f15", "ctrl+c,ctrl+v"})
@@ -210,18 +273,31 @@ func (s *studio) edit(slot int) {
 		case "マウス":
 			value.SetOptions(sortedNames(protocol.Mouse))
 			note.SetText("left_click / right_click / middle_click / wheel_up / wheel_down\nctrl+wheel_up のような修飾キーも指定できます。")
+		case "ランチャー":
+			launchFields.box.Show()
+			valueForm.Hide()
+			note.Hide()
+		}
+		if content != nil {
+			content.Refresh()
+		}
+		if d != nil {
+			d.Refresh()
 		}
 	}
 	if b, ok := s.p.Get(layer, slot); ok {
-		kind.SetSelected(map[string]string{"keyboard": "キーボード", "media": "メディア", "mouse": "マウス"}[b.Kind])
+		kind.SetSelected(map[string]string{"keyboard": "キーボード", "media": "メディア", "mouse": "マウス", "launcher": "ランチャー"}[b.Kind])
 		value.SetText(b.Value)
 	} else {
 		kind.SetSelectedIndex(0)
 	}
 	validation := widget.NewLabel("")
 	validation.Wrapping = fyne.TextWrapWord
-	var d dialog.Dialog
 	makeBinding := func() protocol.Binding {
+		if kind.Selected == "ランチャー" {
+			spec := launchFields.spec()
+			return protocol.Binding{Layer: layer, Slot: slot, Kind: "launcher", Value: launchFields.label.Text, Launch: &spec}
+		}
 		return protocol.Binding{Layer: layer, Slot: slot, Kind: map[string]string{"キーボード": "keyboard", "メディア": "media", "マウス": "mouse"}[kind.Selected], Value: strings.TrimSpace(value.Text)}
 	}
 	add := widget.NewButton("設定に追加", func() {
@@ -239,11 +315,21 @@ func (s *studio) edit(slot int) {
 	value.OnChanged = func(string) { validation.SetText("") }
 	value.OnSubmitted = func(string) { add.OnTapped() }
 	remove := widget.NewButton("書き込み対象から外す", func() { s.p.Remove(layer, slot); s.changed(); d.Hide() })
-	content := container.NewVBox(widget.NewForm(widget.NewFormItem("操作", kind), widget.NewFormItem("割り当て", value)), note, validation, container.NewHBox(remove, layout.NewSpacer(), add))
+	content = container.NewVBox(widget.NewForm(widget.NewFormItem("操作", kind)), valueForm, note, launchFields.box, validation, container.NewHBox(remove, layout.NewSpacer(), add))
+	launchFields.onChanged = func() {
+		content.Refresh()
+		if d != nil {
+			d.Refresh()
+		}
+	}
 	d = dialog.NewCustom(fmt.Sprintf("レイヤー %d / %s", layer, protocol.SlotName(slot)), "閉じる", content, s.w)
-	d.Resize(fyne.NewSize(650, 340))
+	d.Resize(fyne.NewSize(750, 560))
 	d.Show()
-	s.w.Canvas().Focus(value)
+	if kind.Selected == "ランチャー" {
+		s.w.Canvas().Focus(launchFields.command)
+	} else {
+		s.w.Canvas().Focus(value)
+	}
 }
 
 func (s *studio) save() {
@@ -265,6 +351,10 @@ func (s *studio) save() {
 			return
 		}
 		s.dirty = false
+		s.app.Preferences().SetString("profile-path", path)
+		if s.monitorStop != nil {
+			s.app.Preferences().SetBool("launcher-enabled", true)
+		}
 		s.refresh()
 		s.status.SetText("JSON に保存しました: " + path)
 	}, s.w)
@@ -290,12 +380,16 @@ func (s *studio) open() {
 				return
 			}
 			s.p = p
+			if s.monitorStop != nil {
+				s.stopMonitoring()
+			}
 			if p.LED == nil {
 				s.led.SetSelectedIndex(0)
 			} else {
 				s.led.SetSelectedIndex(*p.LED + 1)
 			}
 			s.dirty = false
+			s.app.Preferences().SetString("profile-path", r.URI().Path())
 			s.refresh()
 			s.status.SetText("JSON を読み込みました。USB に送信する前に設定を確認してください。")
 		}, s.w)

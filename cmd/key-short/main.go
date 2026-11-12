@@ -1,12 +1,17 @@
 package main
 
 import (
+	"context"
 	"flag"
 	"fmt"
 	"log/slog"
 	"os"
+	"os/signal"
+	"syscall"
 
 	"key-short/internal/device"
+	"key-short/internal/host"
+	"key-short/internal/launcher"
 	"key-short/internal/logging"
 	"key-short/internal/profile"
 )
@@ -19,6 +24,11 @@ func run() int {
 	apply := flag.String("apply", "", "JSON 設定を USB に書き込む")
 	id := flag.String("device", "", "対象 USB バス:アドレス（例: 002:003）")
 	verbose := flag.Bool("verbose", false, "DEBUG ログを表示")
+	listen := flag.String("listen", "", "JSON のランチャー割り当てを常駐監視")
+	launch := flag.String("launch", "", "JSON の指定スロットの起動・前面化を実行")
+	guiProfile := flag.String("profile", "", "GUI で開く JSON 設定")
+	slot := flag.Int("slot", 1, "-launch の入力番号 (1〜18)")
+	layer := flag.Int("layer", 1, "-launch のレイヤー (1〜3)")
 	flag.Parse()
 	logging.Setup(*verbose)
 	modes := 0
@@ -31,9 +41,56 @@ func run() int {
 	if *apply != "" {
 		modes++
 	}
+	if *listen != "" {
+		modes++
+	}
+	if *launch != "" {
+		modes++
+	}
 	if modes > 1 || flag.NArg() > 0 {
-		slog.Error("-list / -dry-run / -apply は1つだけ指定してください")
+		slog.Error("-list / -dry-run / -apply / -listen / -launch は1つだけ指定してください")
 		return 1
+	}
+	if *listen != "" || *launch != "" {
+		path := *listen
+		if path == "" {
+			path = *launch
+		}
+		p, err := profile.Load(path)
+		if err != nil {
+			slog.Error("設定を読み込めません", "error", err)
+			return 1
+		}
+		m, err := launcher.New("")
+		if err != nil {
+			slog.Error("ランチャーを初期化できません", "error", err)
+			return 1
+		}
+		defer m.Close()
+		ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+		defer cancel()
+		if *launch != "" {
+			b, ok := p.Get(*layer, *slot)
+			if !ok || b.Kind != "launcher" || b.Launch == nil {
+				slog.Error("指定スロットにランチャーの割り当てがありません")
+				return 1
+			}
+			result, err := m.Run(ctx, *b.Launch)
+			if err != nil {
+				slog.Error("起動・前面化に失敗", "error", err)
+				return 1
+			}
+			slog.Info(result.Message)
+			return 0
+		}
+		stop, err := host.Start(ctx, p, m, func(text string) { slog.Info(text) })
+		if err != nil {
+			slog.Error("監視を開始できません", "error", err)
+			return 1
+		}
+		defer stop()
+		<-ctx.Done()
+		return 0
 	}
 	if *list {
 		infos, err := device.List()
@@ -91,7 +148,7 @@ func run() int {
 		}
 		return 0
 	}
-	if err := runGUI(); err != nil {
+	if err := runGUI(*guiProfile); err != nil {
 		slog.Error("アプリを起動できません", "error", err)
 		return 1
 	}
