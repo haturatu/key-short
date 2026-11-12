@@ -37,7 +37,7 @@ func run() int {
 	daemonState := flag.String("daemon-state", "", "管理付き監視の状態フォルダー")
 	listen := flag.String("listen", "", "JSON のランチャー割り当てを常駐監視")
 	launch := flag.String("launch", "", "JSON の指定スロットの起動・前面化を実行")
-	guiProfile := flag.String("profile", "", "GUI で開く JSON 設定")
+	guiProfile := flag.String("profile", "", "GUI または -autostart enable で使用する JSON 設定")
 	slot := flag.Int("slot", 1, "-launch の入力番号 (1〜18)")
 	layer := flag.Int("layer", 1, "-launch のレイヤー (1〜3)")
 	flag.Parse()

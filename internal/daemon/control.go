@@ -1,5 +1,5 @@
 // Package daemon controls only managed foreground listeners, never a GUI or an
-// unrelated process. A private Unix socket avoids signaling a recycled PID.
+// unrelated process. An authenticated Unix socket avoids signaling a recycled PID.
 package daemon
 
 import (

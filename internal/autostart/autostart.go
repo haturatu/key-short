@@ -350,6 +350,22 @@ func (m *Manager) Start(ctx context.Context) error {
 	} else if running {
 		return nil
 	}
+	p, err := profile.Load(c.Profile)
+	if err != nil {
+		return err
+	}
+	if _, err = p.Jobs(); err != nil {
+		return err
+	}
+	launches := false
+	for _, b := range p.Bindings {
+		if b.Kind == "launcher" {
+			launches = true
+		}
+	}
+	if !launches {
+		return fmt.Errorf("ランチャーの割り当てがありません")
+	}
 	if err = os.MkdirAll(c.StateDir, 0700); err != nil {
 		return err
 	}
@@ -365,7 +381,25 @@ func (m *Manager) Start(ctx context.Context) error {
 		if err = m.importEnvironment(ctx); err != nil {
 			return err
 		}
-		return m.Systemctl(ctx, "start", "key-short.service")
+		if err = m.Systemctl(ctx, "start", "key-short.service"); err != nil {
+			return err
+		}
+		ticker := time.NewTicker(50 * time.Millisecond)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			case <-ticker.C:
+				running, err := daemon.Running(ctx, c.StateDir)
+				if err != nil {
+					return err
+				}
+				if running {
+					return nil
+				}
+			}
+		}
 	}
 	if c.Backend != "xdg" {
 		return fmt.Errorf("自動起動方式が不正です")

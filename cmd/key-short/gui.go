@@ -20,12 +20,14 @@ import (
 	"fyne.io/fyne/v2/storage"
 	"fyne.io/fyne/v2/theme"
 	"fyne.io/fyne/v2/widget"
+	"key-short/internal/autostart"
 	"key-short/internal/device"
 	"key-short/internal/launcher"
 	devlayout "key-short/internal/layout"
 	"key-short/internal/profile"
 	"key-short/internal/protocol"
 	"key-short/packaging"
+	"time"
 )
 
 type studio struct {
@@ -65,6 +67,10 @@ type studio struct {
 	monitorGeneration                      uint64
 	dragTarget                             int
 	keyScroll                              *container.Scroll
+	autostartStatus                        *widget.Label
+	autostartBackend                       *widget.Select
+	autostartWidgets                       []fyne.Disableable
+	autostartBusy, daemonRunning           bool
 }
 
 func runGUI(profilePath string) error {
@@ -81,6 +87,21 @@ func runGUI(profilePath string) error {
 	a.SetIcon(fyne.NewStaticResource("key-short.svg", packaging.Icon))
 	s := newStudio(a)
 	defer s.shutdown()
+	if s.autostartStatus != nil {
+		if m, err := autostart.New(); err == nil {
+			ctx, cancel := context.WithTimeout(s.ctx, time.Second)
+			state, err := m.Status(ctx)
+			cancel()
+			if err == nil {
+				s.daemonRunning = state.Running
+				if state.Enabled {
+					a.Preferences().SetBool("launcher-enabled", false)
+				}
+			}
+		}
+		s.manageAutostart("status")
+		s.watchAutostart()
+	}
 	if profilePath != "" {
 		if err := s.loadProfile(profilePath); err != nil {
 			return err
@@ -240,6 +261,9 @@ func wireSignature(p profile.Profile) string {
 }
 func (s *studio) hasDraft() bool { return s.editor != nil && s.editor.dirty }
 func (s *studio) changed() {
+	if s.daemonRunning && !s.autostartBusy {
+		s.manageAutostart("stop")
+	}
 	if s.monitorStop != nil {
 		s.stopMonitoring()
 		s.monitorStatus.SetText("ランチャー停止中 · 設定変更のため停止")
@@ -325,12 +349,17 @@ func (s *studio) refresh() {
 	} else if len(jobs) == 0 {
 		s.writeButton.Disable()
 	}
+	if s.autostartBusy {
+		s.writeButton.Disable()
+		s.monitorButton.Disable()
+	}
 	if s.devices.Selected == "" {
 		s.writeButton.Disable()
 	}
 	if s.editor != nil {
 		s.editor.updateControls()
 	}
+	s.updateAutostartControls()
 	if s.w.Content() != nil {
 		s.w.Content().Refresh()
 	}
@@ -481,9 +510,22 @@ func (s *studio) write() {
 		s.progress.Show()
 		s.status.SetText("設定データを送信しています…")
 		go func() {
-			err := device.Write(id, jobs, func(label string, done, total int) {
-				fyne.Do(func() { s.progress.SetValue(float64(done) / float64(total)); s.status.SetText("送信中: " + label) })
-			})
+			var err error
+			if s.autostartStatus != nil {
+				m, e := autostart.New()
+				if e != nil {
+					err = e
+				} else {
+					ctx, cancel := context.WithTimeout(s.ctx, 20*time.Second)
+					err = m.Stop(ctx)
+					cancel()
+				}
+			}
+			if err == nil {
+				err = device.Write(id, jobs, func(label string, done, total int) {
+					fyne.Do(func() { s.progress.SetValue(float64(done) / float64(total)); s.status.SetText("送信中: " + label) })
+				})
+			}
 			fyne.Do(func() {
 				s.busy = false
 

@@ -3,6 +3,7 @@ package autostart
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -232,6 +233,12 @@ func TestRealXDGStartRestartAndDisable(t *testing.T) {
 	if err != nil || !status.Running {
 		t.Fatal("child did not start", err)
 	}
+	if err := m.Enable(ctx, path, "xdg"); err != nil {
+		t.Fatal("active reconfiguration", err)
+	}
+	if st, err := m.Status(ctx); err != nil || !st.Running {
+		t.Fatal("reconfiguration stopped running listener", err)
+	}
 	if err := m.Restart(ctx); err != nil {
 		t.Fatal("restart", err)
 	}
@@ -261,6 +268,8 @@ func TestAutostartDaemonHelper(t *testing.T) {
 	if dir == "" {
 		os.Exit(2)
 	}
+	fmt.Fprintln(os.Stdout, "INFO helper ready")
+	fmt.Fprintln(os.Stderr, "WARN helper diagnostic")
 	ctx, cancel := context.WithCancel(context.Background())
 	s, err := daemon.Serve(dir, cancel)
 	if err != nil {
@@ -297,5 +306,64 @@ func TestGeneratedStartupFilesWithNativeValidators(t *testing.T) {
 		}
 	} else {
 		t.Log("desktop-file-validate unavailable; CI validates the entry")
+	}
+}
+
+func TestAutoUsesXDGWithoutAnActiveGraphicalTarget(t *testing.T) {
+	m, path := fixture(t)
+	m.Systemctl = func(_ context.Context, args ...string) error {
+		if args[0] == "is-active" {
+			return errors.New("inactive")
+		}
+		return nil
+	}
+	if err := m.Enable(context.Background(), path, "auto"); err != nil {
+		t.Fatal(err)
+	}
+	st, err := m.Status(context.Background())
+	if err != nil || st.Backend != "xdg" {
+		t.Fatal(st, err)
+	}
+}
+func TestFailedStopDoesNotUninstallTheApplication(t *testing.T) {
+	m, path := fixture(t)
+	ctx := context.Background()
+	m.Systemctl = func(context.Context, ...string) error { return nil }
+	if err := m.Enable(ctx, path, "systemd"); err != nil {
+		t.Fatal(err)
+	}
+	m.Systemctl = func(_ context.Context, args ...string) error {
+		if args[0] == "stop" {
+			return errors.New("stop failed")
+		}
+		return nil
+	}
+	if m.Uninstall(ctx) == nil {
+		t.Fatal("failed stop reported success")
+	}
+	if _, err := os.Stat(m.Binary); err != nil {
+		t.Fatal("removed binary while listener may run")
+	}
+}
+func TestProfileAliasCannotOverwriteStartupMetadata(t *testing.T) {
+	m, path := fixture(t)
+	p, err := profile.Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = p.Save(m.configPath()); err != nil {
+		t.Fatal(err)
+	}
+	alias := filepath.Join(m.Home, "alias.json")
+	if err = os.Symlink(m.configPath(), alias); err != nil {
+		t.Fatal(err)
+	}
+	before, _ := os.ReadFile(m.configPath())
+	if m.Enable(context.Background(), alias, "xdg") == nil {
+		t.Fatal("metadata alias accepted")
+	}
+	after, _ := os.ReadFile(m.configPath())
+	if string(before) != string(after) {
+		t.Fatal("overwrote user profile through alias")
 	}
 }
