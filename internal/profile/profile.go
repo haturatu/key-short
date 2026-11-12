@@ -218,3 +218,40 @@ func (p Profile) Save(path string) error {
 	}
 	return os.Rename(f.Name(), path)
 }
+
+// RelocateBinding moves an assignment within one layer. An occupied destination
+// swaps assignments; an empty destination leaves an explicit no-op at the source
+// so a later USB write clears its old action instead of omitting that slot.
+// Validation happens after both changes, including regenerated launcher triggers.
+func (p Profile) RelocateBinding(layer, from, to int) (Profile, error) {
+	l := p.EffectiveLayout()
+	if !l.Contains(from) || !l.Contains(to) {
+		return Profile{}, fmt.Errorf("現在の配置にあるキーかノブを選んでください")
+	}
+	source, ok := p.Get(layer, from)
+	if !ok || isEmptyBinding(source) {
+		return Profile{}, fmt.Errorf("移動元に割り当てがありません")
+	}
+	q := p.Clone()
+	if from == to {
+		return q, nil
+	}
+	source, _ = q.Get(layer, from)
+	target, occupied := q.Get(layer, to)
+	source.Slot = to
+	if occupied {
+		target.Slot = from
+	} else {
+		target = protocol.Binding{Layer: layer, Slot: from, Kind: "keyboard", Value: "none"}
+	}
+	q.Set(source)
+	q.Set(target)
+	if _, err := q.Jobs(); err != nil {
+		return Profile{}, err
+	}
+	return q, nil
+}
+
+func isEmptyBinding(b protocol.Binding) bool {
+	return b.Kind == "keyboard" && strings.EqualFold(strings.TrimSpace(b.Value), "none")
+}
