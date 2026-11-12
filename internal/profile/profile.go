@@ -9,19 +9,82 @@ import (
 	"sort"
 	"strings"
 
+	"key-short/internal/layout"
 	"key-short/internal/protocol"
 )
 
 type Profile struct {
 	Version  int                `json:"version"`
 	Device   string             `json:"device"`
+	Layout   *layout.Layout     `json:"layout,omitempty"`
 	LED      *int               `json:"led"`
 	Bindings []protocol.Binding `json:"bindings"`
 }
 
 func New() Profile { return Profile{Version: 1, Device: "1189:8890", Bindings: []protocol.Binding{}} }
 
-func (p Profile) Jobs() ([]protocol.Job, error) {
+// Clone isolates editor drafts, including the pointer-valued launch and LED
+// settings. A rejected draft must never mutate the applied profile.
+func (p Profile) Clone() Profile {
+	q := p
+	if p.Layout != nil {
+		l := p.Layout.Clone()
+		q.Layout = &l
+	}
+	if p.LED != nil {
+		mode := *p.LED
+		q.LED = &mode
+	}
+	if p.Bindings != nil {
+		q.Bindings = make([]protocol.Binding, len(p.Bindings))
+		copy(q.Bindings, p.Bindings)
+		for i := range q.Bindings {
+			if p.Bindings[i].Launch != nil {
+				spec := *p.Bindings[i].Launch
+				q.Bindings[i].Launch = &spec
+			}
+		}
+	}
+	return q
+}
+
+// WithBinding validates the entire candidate, including launcher reservations.
+// The receiver remains unchanged on both success and failure.
+func (p Profile) WithBinding(b protocol.Binding) (Profile, error) {
+	q := p.Clone()
+	if b.Launch != nil {
+		spec := *b.Launch
+		b.Launch = &spec
+	}
+	q.Set(b)
+	if _, err := q.Jobs(); err != nil {
+		return Profile{}, err
+	}
+	return q, nil
+}
+
+func (p Profile) EffectiveLayout() layout.Layout {
+	if p.Layout == nil {
+		return layout.Default()
+	}
+	return p.Layout.Clone()
+}
+
+// Validate permits retained bindings outside the display layout so a layout
+// change can be saved without destroying settings. Jobs refuses to send them.
+func (p Profile) Validate() error               { _, err := p.jobs(false); return err }
+func (p Profile) Jobs() ([]protocol.Job, error) { return p.jobs(true) }
+func (p Profile) jobs(forWrite bool) ([]protocol.Job, error) {
+	if err := p.EffectiveLayout().Validate(); err != nil {
+		return nil, err
+	}
+	if forWrite {
+		for _, b := range p.Bindings {
+			if !p.EffectiveLayout().Contains(b.Slot) {
+				return nil, fmt.Errorf("%s は現在の配置にありません。配置を戻すか割り当てを外してから送信してください", protocol.SlotName(b.Slot))
+			}
+		}
+	}
 	if p.Version != 1 || p.Device != "1189:8890" {
 		return nil, fmt.Errorf("version: 1、device: 1189:8890 の設定ファイルが必要です")
 	}
@@ -112,7 +175,7 @@ func Decode(r io.Reader) (Profile, error) {
 	if err := d.Decode(new(any)); err != io.EOF {
 		return p, fmt.Errorf("設定ファイルの末尾に不要なデータがあります")
 	}
-	_, err := p.Jobs()
+	err := p.Validate()
 	return p, err
 }
 
@@ -126,7 +189,7 @@ func Load(path string) (Profile, error) {
 }
 
 func (p Profile) Save(path string) error {
-	if _, err := p.Jobs(); err != nil {
+	if err := p.Validate(); err != nil {
 		return err
 	}
 	data, err := json.MarshalIndent(p, "", "  ")

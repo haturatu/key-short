@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"key-short/internal/layout"
 	"key-short/internal/protocol"
 )
 
@@ -71,5 +72,117 @@ func TestLauncherRejectsConflictingKeyboardChord(t *testing.T) {
 	p.Set(protocol.Binding{Layer: 1, Slot: 2, Kind: "keyboard", Value: protocol.Trigger(1, 1)})
 	if _, err := p.Jobs(); err == nil {
 		t.Fatal("keyboard action can trigger a launcher")
+	}
+}
+
+func TestLayoutRetainsHiddenBindingsButRefusesUSBJobs(t *testing.T) {
+	p := New()
+	p.Set(protocol.Binding{Layer: 1, Slot: 12, Kind: "keyboard", Value: "a"})
+	l := layout.Presets()[0].Layout
+	p.Layout = &l
+	path := filepath.Join(t.TempDir(), "small.json")
+	if err := p.Save(path); err != nil {
+		t.Fatal(err)
+	}
+	q, err := Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := q.Get(1, 12); !ok {
+		t.Fatal("layout switch lost binding")
+	}
+	if _, err := q.Jobs(); err == nil {
+		t.Fatal("sent hidden slot")
+	}
+	q.Layout = nil
+	if _, err := q.Jobs(); err != nil {
+		t.Fatal("legacy layout rejected", err)
+	}
+}
+func TestCloneAndCandidateIsolation(t *testing.T) {
+	p := New()
+	led := 1
+	p.LED = &led
+	l := layout.Default()
+	p.Layout = &l
+	p.Set(protocol.Binding{Layer: 1, Slot: 1, Kind: "launcher", Launch: &protocol.LaunchSpec{Mode: "command", Command: "chromium"}})
+	q := p.Clone()
+	*q.LED = 2
+	q.Layout.Slots[0] = 12
+	q.Bindings[0].Launch.Command = "changed"
+	if *p.LED != 1 || p.Layout.Slots[0] != 1 || p.Bindings[0].Launch.Command != "chromium" {
+		t.Fatal("clone aliases original")
+	}
+	if _, err := p.WithBinding(protocol.Binding{Layer: 1, Slot: 2, Kind: "keyboard", Value: protocol.Trigger(1, 1)}); err == nil {
+		t.Fatal("candidate conflict accepted")
+	}
+	if len(p.Bindings) != 1 {
+		t.Fatal("rejected candidate mutated profile")
+	}
+	q, err := p.WithBinding(protocol.Binding{Layer: 1, Slot: 2, Kind: "keyboard", Value: "ctrl+pageup"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(q.Bindings) != 2 || len(p.Bindings) != 1 {
+		t.Fatal("candidate was not isolated")
+	}
+}
+func TestCustomLayoutRoundTripAndInvalidMapping(t *testing.T) {
+	p := New()
+	l := layout.Presets()[1].Layout
+	l.Slots = []int{3, 6, 2, 5, 1, 4}
+	p.Layout = &l
+	p.Set(protocol.Binding{Layer: 1, Slot: 13, Kind: "media", Value: "mute"})
+	path := filepath.Join(t.TempDir(), "layout.json")
+	if err := p.Save(path); err != nil {
+		t.Fatal(err)
+	}
+	q, err := Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if q.Layout.Slots[0] != 3 || q.Layout.Knobs[0].Left != 13 {
+		t.Fatal("mapping lost")
+	}
+	jobs, err := q.Jobs()
+	if err != nil || len(jobs) != 1 {
+		t.Fatal(err)
+	}
+	l.Slots = []int{1, 1}
+	if p.Validate() == nil {
+		t.Fatal("duplicate mapping accepted")
+	}
+}
+func TestSaveReplacementAndFailedRenameCleanup(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "profile.json")
+	if err := os.WriteFile(path, []byte("original"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	p := New()
+	if err := p.Save(path); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Load(path); err != nil {
+		t.Fatal(err)
+	}
+	target := filepath.Join(dir, "occupied")
+	if err := os.Mkdir(target, 0700); err != nil {
+		t.Fatal(err)
+	}
+	sentinel := filepath.Join(target, "sentinel")
+	if err := os.WriteFile(sentinel, []byte("original"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if p.Save(target) == nil {
+		t.Fatal("rename to directory succeeded")
+	}
+	data, err := os.ReadFile(sentinel)
+	if err != nil || string(data) != "original" {
+		t.Fatal("failed save destroyed target")
+	}
+	temps, _ := filepath.Glob(filepath.Join(dir, ".key-short-*.json"))
+	if len(temps) != 0 {
+		t.Fatal("temporary files leaked")
 	}
 }

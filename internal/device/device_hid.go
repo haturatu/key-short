@@ -22,7 +22,7 @@ func List() ([]Info, error) {
 	var infos []Info
 	err := hid.Enumerate(0x1189, 0x8890, func(d *hid.DeviceInfo) error {
 		if d.UsagePage == 0xff00 && d.Usage == 1 && (d.InterfaceNbr == 1 || d.InterfaceNbr < 0) {
-			infos = append(infos, Info{Path: d.Path})
+			infos = append(infos, Info{Path: d.Path, Serial: d.SerialNbr, Product: d.ProductStr})
 		}
 		return nil
 	})

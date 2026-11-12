@@ -7,6 +7,10 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"os"
+	"path/filepath"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/google/gousb"
@@ -20,7 +24,7 @@ func List() ([]Info, error) {
 	var infos []Info
 	_, err := c.OpenDevices(func(d *gousb.DeviceDesc) bool {
 		if d.Vendor == 0x1189 && d.Product == 0x8890 {
-			infos = append(infos, Info{Bus: d.Bus, Address: d.Address})
+			infos = append(infos, linuxInfo(d.Bus, d.Address))
 		}
 		return false
 	})
@@ -112,4 +116,27 @@ func Write(id string, jobs []protocol.Job, progress func(string, int, int)) (err
 	}
 	slog.Info("設定データを USB へ送信しました", "device", id, "items", len(jobs))
 	return nil
+}
+
+// Metadata comes from sysfs; enumeration does not claim a HID interface or send
+// layout query commands unsupported by this legacy protocol.
+func linuxInfo(bus, address int) Info {
+	out := Info{Bus: bus, Address: address}
+	entries, _ := filepath.Glob("/sys/bus/usb/devices/*")
+	for _, path := range entries {
+		read := func(name string) string {
+			b, _ := os.ReadFile(filepath.Join(path, name))
+			return strings.TrimSpace(string(b))
+		}
+		b, _ := strconv.Atoi(read("busnum"))
+		a, _ := strconv.Atoi(read("devnum"))
+		if b != bus || a != address {
+			continue
+		}
+		out.Location = filepath.Base(path)
+		out.Serial = read("serial")
+		out.Product = read("product")
+		break
+	}
+	return out
 }
