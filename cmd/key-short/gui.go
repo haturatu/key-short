@@ -260,14 +260,17 @@ func (s *studio) edit(slot int) {
 	var content *fyne.Container
 	launchFields.box.Hide()
 	valueForm := widget.NewForm(widget.NewFormItem("割り当て", value))
+	recordButton := widget.NewButton("キー入力から記録…", func() { s.recordKeys(value) })
 	note := widget.NewLabel("")
 	note.Wrapping = fyne.TextWrapWord
 	kind.OnChanged = func(v string) {
 		launchFields.box.Hide()
+		recordButton.Hide()
 		valueForm.Show()
 		note.Show()
 		switch v {
 		case "キーボード":
+			recordButton.Show()
 			value.SetOptions([]string{"ctrl+c", "ctrl+v", "ctrl+shift+s", "super+e", "f13", "f14", "f15", "ctrl+c,ctrl+v"})
 			note.SetText("キー名を入力。修飾キーは +、連続操作は , で区切ります（最大5操作）。\n記号は comma / dot / slash / equal などの名前を使います。")
 		case "メディア":
@@ -318,7 +321,7 @@ func (s *studio) edit(slot int) {
 	value.OnChanged = func(string) { validation.SetText("") }
 	value.OnSubmitted = func(string) { add.OnTapped() }
 	remove := widget.NewButton("書き込み対象から外す", func() { s.p.Remove(layer, slot); s.changed(); d.Hide() })
-	content = container.NewVBox(widget.NewForm(widget.NewFormItem("操作", kind)), valueForm, note, launchFields.box, validation, container.NewHBox(remove, layout.NewSpacer(), add))
+	content = container.NewVBox(widget.NewForm(widget.NewFormItem("操作", kind)), valueForm, recordButton, note, launchFields.box, validation, container.NewHBox(remove, layout.NewSpacer(), add))
 	launchFields.onChanged = func() {
 		content.Refresh()
 		if d != nil {
