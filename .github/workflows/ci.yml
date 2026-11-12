@@ -1,0 +1,83 @@
+name: CI
+
+on:
+  push:
+    branches: ['feat/**', 'fix/**', 'chore/**', 'refactor/**', 'tests/**']
+  pull_request:
+  workflow_dispatch:
+  schedule:
+    - cron: '0 0 * * 5' # Friday 09:00 Asia/Tokyo
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  native:
+    name: Native (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-24.04
+            shell: bash
+          - os: windows-2025
+            shell: 'msys2 {0}'
+          - os: macos-15
+            shell: bash
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    defaults:
+      run:
+        shell: ${{ matrix.shell }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: stable
+          cache: true
+      - name: Install Linux native dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y pkg-config libusb-1.0-0-dev libgl1-mesa-dev xorg-dev
+      - name: Install Windows C compiler
+        if: runner.os == 'Windows'
+        uses: msys2/setup-msys2@ec48f7c5447b3140e2b088413ae3a55687bccb6e # v2.33.0
+        with:
+          msystem: UCRT64
+          path-type: inherit
+          update: true
+          install: mingw-w64-ucrt-x86_64-gcc mingw-w64-ucrt-x86_64-pkgconf
+      - name: Verify modules
+        run: go mod verify
+      - name: Vet
+        run: go vet -tags ci ./...
+      - name: Unit and GUI tests (no hardware or real desktop required)
+        run: go test -tags ci ./...
+      - name: Build native desktop application
+        run: |
+          mkdir -p bin
+          if [ "$RUNNER_OS" = Windows ]; then
+            go build -trimpath -o bin/key-short.exe ./cmd/key-short
+          else
+            go build -trimpath -o bin/key-short ./cmd/key-short
+          fi
+      - name: Format and module tidiness
+        if: runner.os == 'Linux'
+        run: |
+          git ls-files -z '*.go' | xargs -0 gofmt -l > /tmp/gofmt-files
+          if [ -s /tmp/gofmt-files ]; then cat /tmp/gofmt-files; exit 1; fi
+          go mod tidy
+          git diff --exit-code -- go.mod go.sum
+      - name: Race detector
+        if: runner.os == 'Linux'
+        run: go test -race -tags ci ./...
+      - name: Vulnerability check
+        if: runner.os == 'Linux'
+        run: go tool govulncheck -tags ci ./...
