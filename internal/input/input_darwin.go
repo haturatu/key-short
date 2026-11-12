@@ -37,6 +37,11 @@ func Monitor(ctx context.Context, fire func(Chord), status func(string)) error {
 		}
 		for _, event := range events[:n] {
 			id := uint64(event.device)
+			if event.usage < 0 {
+				delete(detectors, id)
+				delete(pressed, id)
+				continue
+			}
 			usage := uint16(event.usage)
 			code := uint16(0)
 			if usage >= 0x68 && usage <= 0x73 {

@@ -8,6 +8,10 @@
 static _Thread_local IOHIDManagerRef manager;
 static _Thread_local ks_key queue[256];
 static _Thread_local int count,lost;
+static void removed(void *context,IOReturn result,void *sender,IOHIDDeviceRef device){
+ if(count>=256){lost=1;return;}
+ queue[count++]=(ks_key){(uint64_t)(uintptr_t)device,-1,0};
+}
 static void value(void *context,IOReturn result,void *sender,IOHIDValueRef v){
  IOHIDElementRef element=IOHIDValueGetElement(v);
  if(IOHIDElementGetUsagePage(element)!=7)return;
@@ -22,7 +26,7 @@ int ks_input_open(void){
  int vid=0x1189,pid=0x8890;CFNumberRef v=CFNumberCreate(NULL,kCFNumberIntType,&vid),p=CFNumberCreate(NULL,kCFNumberIntType,&pid);
  const void *keys[]={CFSTR(kIOHIDVendorIDKey),CFSTR(kIOHIDProductIDKey)};const void *values[]={v,p};CFDictionaryRef match=CFDictionaryCreate(NULL,keys,values,2,&kCFTypeDictionaryKeyCallBacks,&kCFTypeDictionaryValueCallBacks);
  IOHIDManagerSetDeviceMatching(manager,match);CFRelease(match);CFRelease(v);CFRelease(p);
- IOHIDManagerRegisterInputValueCallback(manager,value,NULL);IOHIDManagerScheduleWithRunLoop(manager,CFRunLoopGetCurrent(),kCFRunLoopDefaultMode);count=lost=0;
+ IOHIDManagerRegisterInputValueCallback(manager,value,NULL);IOHIDManagerRegisterDeviceRemovalCallback(manager,removed,NULL);IOHIDManagerScheduleWithRunLoop(manager,CFRunLoopGetCurrent(),kCFRunLoopDefaultMode);count=lost=0;
  if(IOHIDManagerOpen(manager,kIOHIDOptionsTypeNone)!=kIOReturnSuccess){ks_input_close();return -1;}return 0;
 }
 int ks_input_read(ks_key *out,int capacity){

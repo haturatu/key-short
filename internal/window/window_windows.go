@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"golang.org/x/sys/windows"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"sync"
@@ -79,6 +80,9 @@ func (b *nativeWindows) List(ctx context.Context) ([]Window, error) {
 	return b.result, nil
 }
 func (*nativeWindows) Activate(ctx context.Context, id string) error {
+	// AttachThreadInput and the focus calls must run on the same Windows thread.
+	runtime.LockOSThread()
+	defer runtime.UnlockOSThread()
 	if err := ctx.Err(); err != nil {
 		return err
 	}
