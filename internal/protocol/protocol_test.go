@@ -12,10 +12,10 @@ func TestVendorFrames(t *testing.T) {
 		b    Binding
 		want [][]byte
 	}{
-		{"ctrl+c", Binding{1, 1, "keyboard", "ctrl+c"}, [][]byte{{3, 0xa1, 1}, {3, 1, 0x11, 1, 0, 1, 0}, {3, 1, 0x11, 1, 1, 1, 6}, {3, 0xaa, 0xaa}}},
-		{"macro-layer3-knob2", Binding{3, 18, "keyboard", "alt+f4,super+e"}, [][]byte{{3, 0xa1, 3}, {3, 18, 0x31, 2, 0, 4, 0}, {3, 18, 0x31, 2, 1, 4, 0x3d}, {3, 18, 0x31, 2, 2, 8, 8}, {3, 0xaa, 0xaa}}},
-		{"knob2-volume", Binding{1, 16, "media", "volume_down"}, [][]byte{{3, 0xa1, 1}, {3, 16, 0x12, 0xea, 0}, {3, 0xaa, 0xaa}}},
-		{"ctrl-scroll", Binding{2, 12, "mouse", "ctrl+wheel_down"}, [][]byte{{3, 0xa1, 2}, {3, 12, 0x23, 0, 0, 0, 255, 1}, {3, 0xaa, 0xaa}}},
+		{"ctrl+c", Binding{Layer: 1, Slot: 1, Kind: "keyboard", Value: "ctrl+c"}, [][]byte{{3, 0xa1, 1}, {3, 1, 0x11, 1, 0, 1, 0}, {3, 1, 0x11, 1, 1, 1, 6}, {3, 0xaa, 0xaa}}},
+		{"macro-layer3-knob2", Binding{Layer: 3, Slot: 18, Kind: "keyboard", Value: "alt+f4,super+e"}, [][]byte{{3, 0xa1, 3}, {3, 18, 0x31, 2, 0, 4, 0}, {3, 18, 0x31, 2, 1, 4, 0x3d}, {3, 18, 0x31, 2, 2, 8, 8}, {3, 0xaa, 0xaa}}},
+		{"knob2-volume", Binding{Layer: 1, Slot: 16, Kind: "media", Value: "volume_down"}, [][]byte{{3, 0xa1, 1}, {3, 16, 0x12, 0xea, 0}, {3, 0xaa, 0xaa}}},
+		{"ctrl-scroll", Binding{Layer: 2, Slot: 12, Kind: "mouse", Value: "ctrl+wheel_down"}, [][]byte{{3, 0xa1, 2}, {3, 12, 0x23, 0, 0, 0, 255, 1}, {3, 0xaa, 0xaa}}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -38,7 +38,7 @@ func TestVendorFrames(t *testing.T) {
 }
 
 func TestInvalidBindings(t *testing.T) {
-	for _, b := range []Binding{{0, 1, "keyboard", "a"}, {4, 1, "keyboard", "a"}, {1, 0, "keyboard", "a"}, {1, 19, "keyboard", "a"}, {1, 1, "keyboard", ""}, {1, 1, "keyboard", "ctrl++"}, {1, 1, "keyboard", "a,b,c,d,e,f"}, {1, 1, "keyboard", "unknown+a"}, {1, 1, "media", "nope"}, {1, 1, "mouse", "super+wheel_up"}, {1, 1, "mouse", "nope"}, {1, 1, "bad", "a"}} {
+	for _, b := range []Binding{{Layer: 0, Slot: 1, Kind: "keyboard", Value: "a"}, {Layer: 4, Slot: 1, Kind: "keyboard", Value: "a"}, {Layer: 1, Slot: 0, Kind: "keyboard", Value: "a"}, {Layer: 1, Slot: 19, Kind: "keyboard", Value: "a"}, {Layer: 1, Slot: 1, Kind: "keyboard", Value: ""}, {Layer: 1, Slot: 1, Kind: "keyboard", Value: "ctrl++"}, {Layer: 1, Slot: 1, Kind: "keyboard", Value: "a,b,c,d,e,f"}, {Layer: 1, Slot: 1, Kind: "keyboard", Value: "unknown+a"}, {Layer: 1, Slot: 1, Kind: "media", Value: "nope"}, {Layer: 1, Slot: 1, Kind: "mouse", Value: "super+wheel_up"}, {Layer: 1, Slot: 1, Kind: "mouse", Value: "nope"}, {Layer: 1, Slot: 1, Kind: "bad", Value: "a"}} {
 		if _, err := b.Frames(); err == nil {
 			t.Errorf("accepted %+v", b)
 		}

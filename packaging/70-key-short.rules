@@ -1,3 +1,5 @@
 # Permit the active local session to open only the specified USB device.
 # Artix/elogind and systemd-logind both support the uaccess tag.
 SUBSYSTEM=="usb", ENV{DEVTYPE}=="usb_device", ATTR{idVendor}=="1189", ATTR{idProduct}=="8890", TAG+="uaccess"
+# The host launcher reads key events only from this macropad.
+SUBSYSTEM=="input", KERNEL=="event*", ATTRS{idVendor}=="1189", ATTRS{idProduct}=="8890", TAG+="uaccess"

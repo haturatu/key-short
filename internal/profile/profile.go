@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 
 	"key-short/internal/protocol"
 )
@@ -29,12 +30,32 @@ func (p Profile) Jobs() ([]protocol.Job, error) {
 	}
 	jobs := []protocol.Job{}
 	seen := map[[2]int]bool{}
+	reserved := map[string]bool{}
+	for _, b := range p.Bindings {
+		if b.Kind == "launcher" {
+			reserved[protocol.Trigger(b.Layer, b.Slot)] = true
+		}
+	}
 	for _, b := range p.Bindings {
 		id := [2]int{b.Layer, b.Slot}
 		if seen[id] {
 			return nil, fmt.Errorf("レイヤー%d・入力%dが重複しています", b.Layer, b.Slot)
 		}
 		seen[id] = true
+		if b.Kind == "keyboard" {
+			for _, step := range strings.Split(b.Value, ",") {
+				mod, key, err := protocol.Stroke(step)
+				if err != nil {
+					return nil, err
+				}
+				for trigger := range reserved {
+					tm, tk, _ := protocol.Stroke(trigger)
+					if mod == tm && key == tk {
+						return nil, fmt.Errorf("キー操作 %s はランチャー用に予約されています", step)
+					}
+				}
+			}
+		}
 		frames, err := b.Frames()
 		if err != nil {
 			return nil, err

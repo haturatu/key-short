@@ -64,3 +64,12 @@ func TestInvalidSavePreservesFile(t *testing.T) {
 		t.Fatal("overwrote existing file")
 	}
 }
+
+func TestLauncherRejectsConflictingKeyboardChord(t *testing.T) {
+	p := New()
+	p.Set(protocol.Binding{Layer: 1, Slot: 1, Kind: "launcher", Launch: &protocol.LaunchSpec{Mode: "command", Command: "chromium"}})
+	p.Set(protocol.Binding{Layer: 1, Slot: 2, Kind: "keyboard", Value: protocol.Trigger(1, 1)})
+	if _, err := p.Jobs(); err == nil {
+		t.Fatal("keyboard action can trigger a launcher")
+	}
+}

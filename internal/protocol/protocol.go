@@ -10,10 +10,11 @@ import (
 type Frame [65]byte
 
 type Binding struct {
-	Layer int    `json:"layer"`
-	Slot  int    `json:"slot"`
-	Kind  string `json:"kind"`
-	Value string `json:"value"`
+	Layer  int         `json:"layer"`
+	Slot   int         `json:"slot"`
+	Kind   string      `json:"kind"`
+	Value  string      `json:"value"`
+	Launch *LaunchSpec `json:"launch,omitempty"`
 }
 
 type Job struct {
@@ -91,6 +92,18 @@ func report(payload ...byte) Frame {
 func (b Binding) Frames() ([]Frame, error) {
 	if b.Layer < 1 || b.Layer > 3 || b.Slot < 1 || b.Slot > 18 {
 		return nil, fmt.Errorf("レイヤーは1〜3、入力番号は1〜18で指定してください")
+	}
+	if b.Kind == "launcher" {
+		if b.Launch == nil {
+			return nil, fmt.Errorf("起動設定がありません")
+		}
+		if err := b.Launch.Validate(); err != nil {
+			return nil, err
+		}
+		return (Binding{Layer: b.Layer, Slot: b.Slot, Kind: "keyboard", Value: Trigger(b.Layer, b.Slot)}).Frames()
+	}
+	if b.Launch != nil {
+		return nil, fmt.Errorf("起動設定は launcher にのみ指定できます")
 	}
 	slot, layer := byte(b.Slot), byte(b.Layer)
 	frames := []Frame{report(0xa1, layer)}
