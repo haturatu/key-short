@@ -83,13 +83,20 @@ func run() int {
 			slog.Info(result.Message)
 			return 0
 		}
-		stop, err := host.Start(ctx, p, m, func(text string) { slog.Info(text) })
+		stop, done, err := host.StartWithDone(ctx, p, m, func(text string) { slog.Info(text) })
 		if err != nil {
 			slog.Error("監視を開始できません", "error", err)
 			return 1
 		}
 		defer stop()
-		<-ctx.Done()
+		select {
+		case <-ctx.Done():
+		case err := <-done:
+			if err != nil {
+				slog.Error("入力監視を継続できません", "error", err)
+				return 1
+			}
+		}
 		return 0
 	}
 	if *list {

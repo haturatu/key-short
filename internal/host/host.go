@@ -21,6 +21,19 @@ func Start(parent context.Context, p profile.Profile, manager *launcher.Manager,
 	return start(parent, p, manager, status, input.Monitor)
 }
 
+// StartWithDone lets CLI callers distinguish an unavailable native input API
+// from a listener that is simply waiting for the USB device to reconnect.
+func StartWithDone(parent context.Context, p profile.Profile, manager *launcher.Manager, status func(string)) (func(), <-chan error, error) {
+	done := make(chan error, 1)
+	stop, err := start(parent, p, manager, status, func(ctx context.Context, fire func(input.Chord), report func(string)) error {
+		err := input.Monitor(ctx, fire, report)
+		done <- err
+		close(done)
+		return err
+	})
+	return stop, done, err
+}
+
 func start(parent context.Context, p profile.Profile, manager *launcher.Manager, status func(string), monitor func(context.Context, func(input.Chord), func(string)) error) (stop func(), err error) {
 	if status == nil {
 		status = func(string) {}

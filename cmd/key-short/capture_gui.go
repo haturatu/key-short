@@ -26,7 +26,11 @@ func (c *captureControl) CreateRenderer() fyne.WidgetRenderer {
 	return widget.NewSimpleRenderer(widget.NewCard("キー入力の記録", "", container.NewVBox(c.title, c.held, c.value, c.errorLabel)))
 }
 func (c *captureControl) sync() {
-	c.held.SetText("修飾キー: " + c.rec.Modifiers())
+	mods := c.rec.Modifiers()
+	if mods == "" {
+		mods = "なし"
+	}
+	c.held.SetText("修飾キー: " + mods)
 	v := c.rec.Value()
 	if v == "" {
 		v = "未記録"

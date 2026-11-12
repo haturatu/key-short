@@ -1,5 +1,6 @@
 #include <IOKit/hid/IOHIDManager.h>
 #include <IOKit/hid/IOHIDLib.h>
+#include <IOKit/hidsystem/IOHIDLib.h>
 #include <ApplicationServices/ApplicationServices.h>
 #include "native_darwin.h"
 
