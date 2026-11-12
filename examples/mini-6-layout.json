@@ -1,0 +1,16 @@
+{
+  "version": 1,
+  "device": "1189:8890",
+  "layout": {
+    "preset": "mini-6",
+    "columns": 2,
+    "slots": [1, 2, 3, 4, 5, 6],
+    "knobs": [{"left": 13, "press": 14, "right": 15}]
+  },
+  "led": null,
+  "bindings": [
+    {"layer": 1, "slot": 1, "kind": "keyboard", "value": "ctrl+pageup"},
+    {"layer": 1, "slot": 13, "kind": "media", "value": "volume_down"},
+    {"layer": 1, "slot": 15, "kind": "media", "value": "volume_up"}
+  ]
+}
