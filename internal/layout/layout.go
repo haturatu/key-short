@@ -43,8 +43,14 @@ func makePreset(id, name string, columns, keys, knobs int) Preset {
 func Default() Layout { return Presets()[4].Layout }
 func (l Layout) Clone() Layout {
 	q := l
-	q.Slots = append([]int(nil), l.Slots...)
-	q.Knobs = append([]Knob(nil), l.Knobs...)
+	if l.Slots != nil {
+		q.Slots = make([]int, len(l.Slots))
+		copy(q.Slots, l.Slots)
+	}
+	if l.Knobs != nil {
+		q.Knobs = make([]Knob, len(l.Knobs))
+		copy(q.Knobs, l.Knobs)
+	}
 	return q
 }
 func (l Layout) Contains(slot int) bool {

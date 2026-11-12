@@ -2,9 +2,12 @@ package main
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/json"
 	"fmt"
 	"log/slog"
 	"os"
+	"path/filepath"
 	"sort"
 	"strings"
 	"sync"
@@ -19,31 +22,47 @@ import (
 	"fyne.io/fyne/v2/widget"
 	"key-short/internal/device"
 	"key-short/internal/launcher"
+	devlayout "key-short/internal/layout"
 	"key-short/internal/profile"
 	"key-short/internal/protocol"
 	"key-short/packaging"
 )
 
 type studio struct {
-	w             fyne.Window
-	p             profile.Profile
-	layer         int
-	buttons       []*widget.Button
-	status, count *widget.Label
-	devices, led  *widget.Select
-	progress      *widget.ProgressBar
-	controls      []fyne.Disableable
-	dirty, busy   bool
-	app           fyne.App
-	ctx           context.Context
-	cancel        context.CancelFunc
-	launchManager *launcher.Manager
-	launchWG      sync.WaitGroup
-	monitorStop   func()
-	monitorButton *widget.Button
-	monitorStatus *widget.Label
-	resident      *widget.Check
-	closing       bool
+	w                                      fyne.Window
+	p                                      profile.Profile
+	layer                                  int
+	buttons                                []*widget.Button
+	status, count                          *widget.Label
+	devices, led                           *widget.Select
+	progress                               *widget.ProgressBar
+	controls                               []fyne.Disableable
+	dirty, busy                            bool
+	app                                    fyne.App
+	ctx                                    context.Context
+	cancel                                 context.CancelFunc
+	launchManager                          *launcher.Manager
+	launchWG                               sync.WaitGroup
+	monitorStop                            func()
+	monitorButton                          *widget.Button
+	monitorStatus                          *widget.Label
+	resident                               *widget.Check
+	closing                                bool
+	loading                                bool
+	selectedSlot                           int
+	editor                                 *bindingEditor
+	editorHost, keyHost                    *fyne.Container
+	layers, layouts                        *widget.Select
+	jsonState, usbState                    *widget.Label
+	layoutNote                             *widget.Label
+	saveButton, writeButton, previewButton *widget.Button
+	saveAsButton                           *widget.Button
+	profilePath, savedSignature            string
+	usbFailedTarget                        string
+	usbSignature, usbTarget                string
+	usbFailed                              bool
+	deviceInfos                            []device.Info
+	monitorGeneration                      uint64
 }
 
 func runGUI(profilePath string) error {
@@ -75,79 +94,104 @@ func runGUI(profilePath string) error {
 
 func newStudio(a fyne.App) *studio {
 	ctx, cancel := context.WithCancel(context.Background())
-	s := &studio{app: a, ctx: ctx, cancel: cancel, w: a.NewWindow("Key Short · MINI KeyBoard"), p: profile.New(), layer: 1}
-	s.w.Resize(fyne.NewSize(1100, 780))
-	s.status = widget.NewLabel("割り当てを追加し、JSON に保存するか USB に書き込んでください。")
+	s := &studio{app: a, ctx: ctx, cancel: cancel, w: a.NewWindow("Key Short"), p: profile.New(), layer: 1, selectedSlot: 1, loading: true}
+	s.w.Resize(fyne.NewSize(1180, 860))
+	s.status = widget.NewLabel("キーを選び、右側で編集して適用してください。USB への送信は別の操作です。")
 	s.status.Wrapping = fyne.TextWrapWord
 	s.count = widget.NewLabel("")
-	s.devices = widget.NewSelect(nil, nil)
+	s.jsonState = widget.NewLabel("")
+	s.usbState = widget.NewLabel("")
+	s.jsonState.Wrapping = fyne.TextWrapWord
+	s.usbState.Wrapping = fyne.TextWrapWord
+	s.devices = widget.NewSelect(nil, func(string) {
+		if !s.loading {
+			s.deviceSelected()
+			s.refresh()
+		}
+	})
 	s.devices.PlaceHolder = "デバイス未検出"
-	refresh := widget.NewButtonWithIcon("再検出", theme.ViewRefreshIcon(), s.scan)
-	s.controls = append(s.controls, s.devices, refresh)
-	layers := widget.NewSelect([]string{"レイヤー 1", "レイヤー 2", "レイヤー 3"}, func(value string) { s.layer = int(value[len(value)-1] - '0'); s.refresh() })
-	layers.SetSelectedIndex(0)
-	s.controls = append(s.controls, layers)
-	grid := container.NewGridWithColumns(3)
-	knobs := container.NewGridWithColumns(2)
+	rescan := widget.NewButtonWithIcon("再検出", theme.ViewRefreshIcon(), s.scan)
+	s.layers = widget.NewSelect([]string{"レイヤー 1", "レイヤー 2", "レイヤー 3"}, func(v string) {
+		if !s.loading {
+			s.selectInput(int(v[len(v)-1]-'0'), s.selectedSlot)
+		}
+	})
+	s.layers.SetSelectedIndex(0)
 	for slot := 1; slot <= 18; slot++ {
 		n := slot
 		b := widget.NewButton("", func() { s.edit(n) })
 		s.buttons = append(s.buttons, b)
 		s.controls = append(s.controls, b)
-		if slot <= 12 {
-			grid.Add(b)
-		}
 	}
-	for knob := 0; knob < 2; knob++ {
-		box := container.NewVBox(widget.NewLabelWithStyle(fmt.Sprintf("ノブ %d", knob+1), fyne.TextAlignCenter, fyne.TextStyle{Bold: true}))
-		for i := 0; i < 3; i++ {
-			box.Add(s.buttons[12+knob*3+i])
+	s.layouts = widget.NewSelect(nil, func(v string) {
+		if s.loading {
+			return
 		}
-		knobs.Add(box)
+		for _, preset := range devlayout.Presets() {
+			if preset.Name == v {
+				s.requestLayout(preset.Layout)
+				return
+			}
+		}
+		if v == "カスタム配置…" {
+			s.layoutDialog()
+		}
+	})
+	for _, preset := range devlayout.Presets() {
+		s.layouts.Options = append(s.layouts.Options, preset.Name)
 	}
-	keyArea := container.NewVBox(widget.NewLabelWithStyle("キーを選んで編集", fyne.TextAlignLeading, fyne.TextStyle{Bold: true}), grid, widget.NewSeparator(), knobs)
-	s.led = widget.NewSelect([]string{"変更しない", "0 · 消灯", "1 · モード1", "2 · モード2"}, func(value string) {
-		if value == "変更しない" {
+	s.layouts.Options = append(s.layouts.Options, "カスタム配置…")
+	custom := widget.NewButton("スロットの並びを調整…", s.layoutDialog)
+	s.keyHost = container.NewVBox()
+	s.led = widget.NewSelect([]string{"変更しない", "0 · 消灯", "1 · モード1", "2 · モード2"}, func(v string) {
+		if s.loading {
+			return
+		}
+		if v == "変更しない" {
 			s.p.LED = nil
 		} else {
-			mode := int(value[0] - '0')
+			mode := int(v[0] - '0')
 			s.p.LED = &mode
 		}
 		s.changed()
 	})
 	s.led.SetSelectedIndex(0)
-	s.dirty = false
-	s.controls = append(s.controls, s.led)
-	help := widget.NewLabel("12キー / 2ノブ\n\nキーとノブは同じ方法で設定できます。\n\nショートカット: ctrl+shift+s\n連続操作: ctrl+c,ctrl+v\n最大5操作 / F1〜F24 対応\n\n未設定の項目は書き込みません。\n本体の現在の割り当ては読み出せません。\n\nLED の見え方やレイヤー対応は\nファームウェアにより異なります。")
-	help.Wrapping = fyne.TextWrapWord
-	side := container.NewVBox(widget.NewLabelWithStyle("MINI KeyBoard", fyne.TextAlignLeading, fyne.TextStyle{Bold: true}), widget.NewLabel("1189:8890 · CH57x"), widget.NewSeparator(), s.launcherControls(), widget.NewSeparator(), help, widget.NewSeparator(), widget.NewLabel("LED"), s.led)
-	split := container.NewHSplit(container.NewPadded(container.NewVScroll(keyArea)), container.NewPadded(container.NewVScroll(side)))
-	split.Offset = 0.68
+	launchControls := s.launcherControls()
+	note := widget.NewLabel("配置の変更だけでは USB に書き込みません。キー番号と実機の対応を確認してください。")
+	note.Wrapping = fyne.TextWrapWord
+	s.layoutNote = widget.NewLabel("機種未確定 · 配置を選択してください。")
+	s.layoutNote.Wrapping = fyne.TextWrapWord
+	keyArea := container.NewVBox(widget.NewLabelWithStyle("キー配置", fyne.TextAlignLeading, fyne.TextStyle{Bold: true}), s.layouts, custom, s.layoutNote, note, s.keyHost,
+		widget.NewAccordion(widget.NewAccordionItem("LED・ランチャー設定", container.NewVBox(widget.NewLabel("LED"), s.led, launchControls))))
+	s.editorHost = container.NewVBox()
+	split := container.NewHSplit(container.NewPadded(container.NewVScroll(keyArea)), container.NewPadded(container.NewVScroll(s.editorHost)))
+	split.Offset = 0.48
 	open := widget.NewButtonWithIcon("JSON を開く", theme.FolderOpenIcon(), s.open)
-	save := widget.NewButtonWithIcon("JSON に保存", theme.DocumentSaveIcon(), s.save)
-	preview := widget.NewButton("送信データを確認", s.preview)
-	write := widget.NewButtonWithIcon("USB に書き込む", theme.UploadIcon(), s.write)
-	write.Importance = widget.HighImportance
-	s.controls = append(s.controls, open, save, preview, write)
+	s.saveButton = widget.NewButtonWithIcon("保存", theme.DocumentSaveIcon(), s.save)
+	saveAs := widget.NewButton("別名で保存", s.saveAs)
+	s.saveAsButton = saveAs
+	s.previewButton = widget.NewButton("送信データを確認", s.preview)
+	s.writeButton = widget.NewButtonWithIcon("USB に書き込む", theme.UploadIcon(), s.write)
+	s.writeButton.Importance = widget.HighImportance
+	s.controls = append(s.controls, s.devices, rescan, s.layers, s.layouts, custom, s.led, open, s.saveButton, saveAs, s.previewButton, s.writeButton)
 	s.progress = widget.NewProgressBar()
 	s.progress.Hide()
-	header := container.NewBorder(nil, nil, widget.NewLabelWithStyle("Key Short", fyne.TextAlignLeading, fyne.TextStyle{Bold: true}), layers, container.NewBorder(nil, nil, nil, refresh, s.devices))
-	footer := container.NewVBox(s.count, container.NewHBox(open, save, preview, layout.NewSpacer(), write), s.progress, s.status)
+	header := container.NewVBox(container.NewBorder(nil, nil, widget.NewLabelWithStyle("Key Short", fyne.TextAlignLeading, fyne.TextStyle{Bold: true}), s.layers, container.NewBorder(nil, nil, nil, rescan, s.devices)), s.count)
+	footer := container.NewVBox(container.NewGridWithColumns(3, s.jsonState, s.usbState, s.monitorStatus), container.NewHBox(open, s.previewButton, layout.NewSpacer(), saveAs, s.saveButton, s.writeButton), s.progress, s.status)
 	s.w.SetContent(container.NewPadded(container.NewBorder(header, footer, nil, nil, split)))
-	s.w.SetCloseIntercept(func() {
-		if s.busy {
-			dialog.ShowInformation("送信中", "USB への送信完了を待ってください。", s.w)
-			return
-		}
-		s.requestClose(false)
-	})
+	s.w.SetCloseIntercept(func() { s.requestClose(false) })
+	s.loading = false
+	s.savedSignature = profileSignature(s.p)
+	s.activateSelection(1, 1)
+	s.rebuildLayout()
 	s.refresh()
-	s.scan()
+	// A saved profile is authoritative over a remembered device layout.
 	if path := a.Preferences().String("profile-path"); path != "" {
 		if err := s.loadProfile(path); err != nil {
 			s.status.SetText("前回の JSON を読み込めません: " + err.Error())
 		}
 	}
+	s.scan()
 	return s
 }
 
@@ -161,7 +205,7 @@ func (s *studio) requestClose(force bool) {
 		s.w.Hide()
 		return
 	}
-	if s.dirty {
+	if s.dirty || s.hasDraft() {
 		dialog.ShowConfirm("未保存の設定", "JSON に保存していない変更があります。終了しますか？", func(ok bool) {
 			if ok {
 				s.shutdown()
@@ -176,13 +220,33 @@ func (s *studio) requestClose(force bool) {
 	s.app.Quit()
 }
 
+func profileSignature(p profile.Profile) string {
+	data, _ := json.Marshal(p)
+	return fmt.Sprintf("%x", sha256.Sum256(data))
+}
+func wireSignature(p profile.Profile) string {
+	jobs, err := p.Jobs()
+	if err != nil {
+		return ""
+	}
+	var frames []protocol.Frame
+	for _, job := range jobs {
+		frames = append(frames, job.Frames...)
+	}
+	data, _ := json.Marshal(frames)
+	return fmt.Sprintf("%x", sha256.Sum256(data))
+}
+func (s *studio) hasDraft() bool { return s.editor != nil && s.editor.dirty }
 func (s *studio) changed() {
 	if s.monitorStop != nil {
 		s.stopMonitoring()
-		s.monitorStatus.SetText("設定を変更したため停止しました。USB 書き込み後に監視を再開してください。")
+		s.monitorStatus.SetText("ランチャー停止中 · 設定変更のため停止")
 	}
-	s.dirty = true
+	s.dirty = profileSignature(s.p) != s.savedSignature
 	s.refresh()
+	if s.editor != nil {
+		s.editor.validate()
+	}
 }
 func (s *studio) refresh() {
 	for i, b := range s.buttons {
@@ -190,16 +254,81 @@ func (s *studio) refresh() {
 		if binding, ok := s.p.Get(s.layer, i+1); ok {
 			value = binding.DisplayValue()
 		}
-		if runes := []rune(value); len(runes) > 24 {
-			value = string(runes[:23]) + "…"
+		if runes := []rune(value); len(runes) > 22 {
+			value = string(runes[:21]) + "…"
 		}
 		b.SetText(protocol.SlotName(i+1) + "\n" + value)
+		b.Importance = widget.MediumImportance
+		if s.selectedSlot == i+1 {
+			b.Importance = widget.HighImportance
+		}
+		b.Refresh()
 	}
-	mark := ""
-	if s.dirty {
-		mark = " · JSON 未保存"
+	name := "新規プロファイル"
+	if s.profilePath != "" {
+		name = filepath.Base(s.profilePath)
 	}
-	s.count.SetText(fmt.Sprintf("%d 件の割り当て%s", len(s.p.Bindings), mark))
+	draft := ""
+	if s.hasDraft() {
+		draft = " · キーに未適用の変更あり"
+	}
+	s.count.SetText(fmt.Sprintf("%s · %d 件の割り当て%s", name, len(s.p.Bindings), draft))
+	state := "JSON 保存済み"
+	if s.profilePath == "" || s.dirty {
+		state = "JSON 未保存"
+	}
+	s.jsonState.SetText(state)
+	usb := "USB 未送信 / 現在の設定は不明"
+	if s.usbSignature != "" && s.usbTarget == s.devices.Selected {
+		usb = "USB 未反映の変更あり"
+		if s.usbSignature == wireSignature(s.p) {
+			usb = "USB 送信済み · 実機未検証"
+		}
+	}
+	if s.usbFailed && s.usbFailedTarget == s.devices.Selected {
+		usb = "USB 送信失敗 · 一部反映の可能性あり"
+	}
+	if s.busy {
+		usb = "USB 送信中…"
+	}
+	s.usbState.SetText(usb)
+	for _, c := range s.controls {
+		if s.busy {
+			c.Disable()
+		} else {
+			c.Enable()
+		}
+	}
+	if s.hasDraft() {
+		s.saveButton.Disable()
+		s.saveAsButton.Disable()
+		s.writeButton.Disable()
+		s.previewButton.Disable()
+		if s.monitorStop == nil {
+			s.monitorButton.Disable()
+		}
+	}
+	if jobs, err := s.p.Jobs(); err != nil {
+		s.writeButton.Disable()
+		s.previewButton.Disable()
+		if !s.busy {
+			s.status.SetText(err.Error())
+		}
+		if s.monitorStop == nil {
+			s.monitorButton.Disable()
+		}
+	} else if len(jobs) == 0 {
+		s.writeButton.Disable()
+	}
+	if s.devices.Selected == "" {
+		s.writeButton.Disable()
+	}
+	if s.editor != nil {
+		s.editor.updateControls()
+	}
+	if s.w.Content() != nil {
+		s.w.Content().Refresh()
+	}
 }
 
 func (s *studio) fail(err error) {
@@ -209,6 +338,9 @@ func (s *studio) fail(err error) {
 }
 
 func (s *studio) scan() {
+	if s.busy {
+		return
+	}
 	infos, err := device.List()
 	if err != nil {
 		s.fail(err)
@@ -220,6 +352,8 @@ func (s *studio) scan() {
 		options = append(options, info.ID())
 	}
 	s.devices.Options = options
+	s.loading = true
+	s.deviceInfos = infos
 	s.devices.ClearSelected()
 	for _, id := range options {
 		if id == old {
@@ -229,7 +363,10 @@ func (s *studio) scan() {
 	if s.devices.Selected == "" && len(options) == 1 {
 		s.devices.SetSelected(options[0])
 	}
+	s.loading = false
 	s.devices.Refresh()
+	s.deviceSelected()
+	s.refresh()
 	if len(options) == 0 {
 		s.status.SetText("1189:8890 が見つかりません。USB を接続し、再検出してください。")
 	} else {
@@ -244,129 +381,6 @@ func sortedNames[T any](m map[string]T) []string {
 	}
 	sort.Strings(keys)
 	return keys
-}
-
-func (s *studio) edit(slot int) {
-	layer := s.layer
-	value := widget.NewSelectEntry(nil)
-	kind := widget.NewSelect([]string{"キーボード", "メディア", "マウス", "ランチャー"}, nil)
-	existing, _ := s.p.Get(layer, slot)
-	launchLabel := ""
-	if existing.Kind == "launcher" {
-		launchLabel = existing.Value
-	}
-	launchFields := s.newLaunchEditor(existing.Launch, launchLabel)
-	var d dialog.Dialog
-	var content *fyne.Container
-	launchFields.box.Hide()
-	valueForm := widget.NewForm(widget.NewFormItem("割り当て", value))
-	recordButton := widget.NewButton("キー入力から記録…", func() { s.recordKeys(value) })
-	note := widget.NewLabel("")
-	note.Wrapping = fyne.TextWrapWord
-	kind.OnChanged = func(v string) {
-		launchFields.box.Hide()
-		recordButton.Hide()
-		valueForm.Show()
-		note.Show()
-		switch v {
-		case "キーボード":
-			recordButton.Show()
-			value.SetOptions([]string{"ctrl+c", "ctrl+v", "ctrl+shift+s", "super+e", "f13", "f14", "f15", "ctrl+c,ctrl+v"})
-			note.SetText("キー名を入力。修飾キーは +、連続操作は , で区切ります（最大5操作）。\n記号は comma / dot / slash / equal などの名前を使います。")
-		case "メディア":
-			value.SetOptions(sortedNames(protocol.Media))
-			note.SetText("volume_down / volume_up / mute / play_pause / previous / next / stop")
-		case "マウス":
-			value.SetOptions(sortedNames(protocol.Mouse))
-			note.SetText("left_click / right_click / middle_click / wheel_up / wheel_down\nctrl+wheel_up のような修飾キーも指定できます。")
-		case "ランチャー":
-			launchFields.box.Show()
-			valueForm.Hide()
-			note.Hide()
-		}
-		if content != nil {
-			content.Refresh()
-		}
-		if d != nil {
-			d.Refresh()
-		}
-	}
-	if b, ok := s.p.Get(layer, slot); ok {
-		kind.SetSelected(map[string]string{"keyboard": "キーボード", "media": "メディア", "mouse": "マウス", "launcher": "ランチャー"}[b.Kind])
-		value.SetText(b.Value)
-	} else {
-		kind.SetSelectedIndex(0)
-	}
-	validation := widget.NewLabel("")
-	validation.Wrapping = fyne.TextWrapWord
-	makeBinding := func() protocol.Binding {
-		if kind.Selected == "ランチャー" {
-			spec := launchFields.spec()
-			return protocol.Binding{Layer: layer, Slot: slot, Kind: "launcher", Value: launchFields.label.Text, Launch: &spec}
-		}
-		return protocol.Binding{Layer: layer, Slot: slot, Kind: map[string]string{"キーボード": "keyboard", "メディア": "media", "マウス": "mouse"}[kind.Selected], Value: strings.TrimSpace(value.Text)}
-	}
-	add := widget.NewButton("設定に追加", func() {
-		b := makeBinding()
-		if _, err := b.Frames(); err != nil {
-			validation.SetText(err.Error())
-			return
-		}
-		s.p.Set(b)
-		s.changed()
-		s.status.SetText("設定に追加しました。USB への送信は「USB に書き込む」で実行します。")
-		d.Hide()
-	})
-	add.Importance = widget.HighImportance
-	value.OnChanged = func(string) { validation.SetText("") }
-	value.OnSubmitted = func(string) { add.OnTapped() }
-	remove := widget.NewButton("書き込み対象から外す", func() { s.p.Remove(layer, slot); s.changed(); d.Hide() })
-	content = container.NewVBox(widget.NewForm(widget.NewFormItem("操作", kind)), valueForm, recordButton, note, launchFields.box, validation, container.NewHBox(remove, layout.NewSpacer(), add))
-	launchFields.onChanged = func() {
-		content.Refresh()
-		if d != nil {
-			d.Refresh()
-		}
-	}
-	d = dialog.NewCustom(fmt.Sprintf("レイヤー %d / %s", layer, protocol.SlotName(slot)), "閉じる", content, s.w)
-	d.Resize(fyne.NewSize(750, 560))
-	d.Show()
-	if kind.Selected == "ランチャー" {
-		s.w.Canvas().Focus(launchFields.command)
-	} else {
-		s.w.Canvas().Focus(value)
-	}
-}
-
-func (s *studio) save() {
-	d := dialog.NewFileSave(func(w fyne.URIWriteCloser, err error) {
-		if err != nil {
-			s.fail(err)
-			return
-		}
-		if w == nil {
-			return
-		}
-		path := w.URI().Path()
-		if err = w.Close(); err != nil {
-			s.fail(err)
-			return
-		}
-		if err = s.p.Save(path); err != nil {
-			s.fail(err)
-			return
-		}
-		s.dirty = false
-		s.app.Preferences().SetString("profile-path", path)
-		if s.monitorStop != nil {
-			s.app.Preferences().SetBool("launcher-enabled", true)
-		}
-		s.refresh()
-		s.status.SetText("JSON に保存しました: " + path)
-	}, s.w)
-	d.SetFileName("key-short.json")
-	d.SetFilter(storage.NewExtensionFileFilter([]string{".json"}))
-	d.Show()
 }
 
 func (s *studio) open() {
@@ -385,24 +399,13 @@ func (s *studio) open() {
 				s.fail(err)
 				return
 			}
-			s.p = p
-			if s.monitorStop != nil {
-				s.stopMonitoring()
-			}
-			if p.LED == nil {
-				s.led.SetSelectedIndex(0)
-			} else {
-				s.led.SetSelectedIndex(*p.LED + 1)
-			}
-			s.dirty = false
-			s.app.Preferences().SetString("profile-path", r.URI().Path())
-			s.refresh()
+			s.installProfile(p, r.URI().Path())
 			s.status.SetText("JSON を読み込みました。USB に送信する前に設定を確認してください。")
 		}, s.w)
 		d.SetFilter(storage.NewExtensionFileFilter([]string{".json"}))
 		d.Show()
 	}
-	if s.dirty {
+	if s.dirty || s.hasDraft() {
 		dialog.ShowConfirm("未保存の設定", "編集中の設定を JSON ファイルの内容に置き換えますか？", func(ok bool) {
 			if ok {
 				show()
@@ -414,6 +417,9 @@ func (s *studio) open() {
 }
 
 func (s *studio) preview() {
+	if s.busy || s.hasDraft() {
+		return
+	}
 	jobs, err := s.p.Jobs()
 	if err != nil {
 		s.fail(err)
@@ -438,6 +444,10 @@ func (s *studio) preview() {
 }
 
 func (s *studio) write() {
+	if s.busy || s.hasDraft() {
+		return
+	}
+	snapshot := s.p.Clone()
 	jobs, err := s.p.Jobs()
 	if err != nil {
 		s.fail(err)
@@ -456,10 +466,12 @@ func (s *studio) write() {
 		if !ok {
 			return
 		}
-		s.busy = true
-		for _, c := range s.controls {
-			c.Disable()
+		if s.busy || s.hasDraft() || id != s.devices.Selected || profileSignature(snapshot) != profileSignature(s.p) {
+			s.fail(fmt.Errorf("設定または対象デバイスが変わりました。確認し直してください"))
+			return
 		}
+		s.busy = true
+		s.refresh()
 		s.progress.SetValue(0)
 		s.progress.Show()
 		s.status.SetText("設定データを送信しています…")
@@ -469,10 +481,15 @@ func (s *studio) write() {
 			})
 			fyne.Do(func() {
 				s.busy = false
-				for _, c := range s.controls {
-					c.Enable()
-				}
+
 				s.progress.Hide()
+				s.usbFailed = err != nil
+				s.usbFailedTarget = id
+				if err == nil {
+					s.usbSignature = wireSignature(snapshot)
+					s.usbTarget = id
+				}
+				s.refresh()
 				if err != nil {
 					s.fail(err)
 				} else {

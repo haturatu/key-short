@@ -51,10 +51,13 @@ func (s *studio) launcherControls() fyne.CanvasObject {
 	}
 	help := widget.NewLabel("アプリ起動には常駐監視が必要です。JSON の保存と USB への書き込み後に開始してください。")
 	help.Wrapping = fyne.TextWrapWord
-	return container.NewVBox(widget.NewLabelWithStyle("アプリランチャー", fyne.TextAlignLeading, fyne.TextStyle{Bold: true}), help, s.monitorButton, s.resident, s.monitorStatus)
+	return container.NewVBox(widget.NewLabelWithStyle("アプリランチャー", fyne.TextAlignLeading, fyne.TextStyle{Bold: true}), help, s.monitorButton, s.resident)
 }
 
 func (s *studio) startMonitoring() {
+	if s.busy || s.hasDraft() {
+		return
+	}
 	if s.monitorStop != nil {
 		return
 	}
@@ -63,9 +66,11 @@ func (s *studio) startMonitoring() {
 		s.fail(err)
 		return
 	}
-	stop, err := host.Start(s.ctx, s.p, m, func(text string) {
+	s.monitorGeneration++
+	generation := s.monitorGeneration
+	stop, done, err := host.StartWithDone(s.ctx, s.p, m, func(text string) {
 		fyne.Do(func() {
-			if s.monitorStop != nil && !s.closing {
+			if s.monitorGeneration == generation && s.monitorStop != nil && !s.closing {
 				s.monitorStatus.SetText(text)
 			}
 		})
@@ -75,12 +80,26 @@ func (s *studio) startMonitoring() {
 		return
 	}
 	s.monitorStop = stop
+	go func() {
+		err := <-done
+		fyne.Do(func() {
+			if s.closing || s.monitorGeneration != generation {
+				return
+			}
+			s.stopMonitoring()
+			if err != nil {
+				s.monitorStatus.SetText("ランチャー停止 · " + err.Error())
+			}
+		})
+	}()
 	s.monitorButton.SetText("ランチャー監視を停止")
 	s.monitorStatus.SetText("ランチャー監視を開始しています…")
 	s.app.Preferences().SetBool("launcher-enabled", !s.dirty && s.app.Preferences().String("profile-path") != "")
+	s.refresh()
 }
 
 func (s *studio) stopMonitoring() {
+	s.monitorGeneration++
 	if s.monitorStop != nil {
 		stop := s.monitorStop
 		s.monitorStop = nil
@@ -89,6 +108,7 @@ func (s *studio) stopMonitoring() {
 	s.monitorButton.SetText("ランチャー監視を開始")
 	s.monitorStatus.SetText("ランチャー停止中")
 	s.app.Preferences().SetBool("launcher-enabled", false)
+	s.refresh()
 }
 
 func (s *studio) shutdown() {
@@ -117,19 +137,8 @@ func (s *studio) loadProfile(path string) error {
 	if err != nil {
 		return err
 	}
-	if s.monitorStop != nil {
-		s.stopMonitoring()
-	}
-	s.p = p
-	if p.LED == nil {
-		s.led.SetSelectedIndex(0)
-	} else {
-		s.led.SetSelectedIndex(*p.LED + 1)
-	}
-	s.dirty = false
-	s.refresh()
+	s.installProfile(p, path)
 	s.status.SetText("JSON を読み込みました: " + path)
-	s.app.Preferences().SetString("profile-path", path)
 	return nil
 }
 
@@ -140,6 +149,8 @@ type launchEditor struct {
 	reuse                      *widget.Check
 	app                        desktop.Application
 	onChanged                  func()
+	testing                    bool
+	choose, testButton         *widget.Button
 }
 
 func (e *launchEditor) spec() protocol.LaunchSpec {
@@ -163,9 +174,18 @@ func (s *studio) newLaunchEditor(initial *protocol.LaunchSpec, label string) *la
 	selected := widget.NewLabel("アプリを選択してください")
 	selected.Wrapping = fyne.TextWrapWord
 	choose := widget.NewButton("アプリを選択…", func() {
+		if s.busy {
+			return
+		}
 		s.pickApplication(func(a desktop.Application) {
+			if s.busy {
+				return
+			}
 			e.app = a
 			selected.SetText(a.Name)
+			if e.onChanged != nil {
+				e.onChanged()
+			}
 			if e.label.Text == "" {
 				e.label.SetText(a.Name)
 			}
@@ -199,6 +219,9 @@ func (s *studio) newLaunchEditor(initial *protocol.LaunchSpec, label string) *la
 	message.Wrapping = fyne.TextWrapWord
 	var testButton *widget.Button
 	testButton = widget.NewButton("起動をテスト", func() {
+		if s.busy {
+			return
+		}
 		spec := e.spec()
 		if err := spec.Validate(); err != nil {
 			message.SetText(err.Error())
@@ -209,6 +232,7 @@ func (s *studio) newLaunchEditor(initial *protocol.LaunchSpec, label string) *la
 			message.SetText(err.Error())
 			return
 		}
+		e.testing = true
 		testButton.Disable()
 		message.SetText("起動・前面化を確認しています…")
 		s.launchWG.Add(1)
@@ -219,7 +243,10 @@ func (s *studio) newLaunchEditor(initial *protocol.LaunchSpec, label string) *la
 				if s.closing {
 					return
 				}
-				testButton.Enable()
+				e.testing = false
+				if !s.busy {
+					testButton.Enable()
+				}
 				if err != nil {
 					message.SetText(err.Error())
 				} else {
@@ -228,6 +255,8 @@ func (s *studio) newLaunchEditor(initial *protocol.LaunchSpec, label string) *la
 			})
 		}()
 	})
+	e.choose = choose
+	e.testButton = testButton
 	e.box = container.NewVBox(widget.NewForm(widget.NewFormItem("起動方法", e.mode), widget.NewFormItem("表示名", e.label)), appBox, commandBox, commandHelp, e.reuse, advanced, container.NewHBox(testButton, layout.NewSpacer()), message)
 	if initial != nil {
 		e.command.SetText(initial.Command)
@@ -249,6 +278,15 @@ func (s *studio) newLaunchEditor(initial *protocol.LaunchSpec, label string) *la
 	} else {
 		e.mode.SetSelectedIndex(0)
 	}
+	notify := func() {
+		if e.onChanged != nil {
+			e.onChanged()
+		}
+	}
+	for _, entry := range []*widget.Entry{e.command, e.label, e.class, e.dir} {
+		entry.OnChanged = func(string) { notify() }
+	}
+	e.reuse.OnChanged = func(bool) { notify() }
 	return e
 }
 

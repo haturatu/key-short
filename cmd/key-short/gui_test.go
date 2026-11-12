@@ -8,7 +8,6 @@ import (
 
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/test"
-	"fyne.io/fyne/v2/widget"
 )
 
 func walk(object fyne.CanvasObject, visit func(fyne.CanvasObject)) {
@@ -24,50 +23,29 @@ func TestEditorRejectsInvalidAndSavesKnob2(t *testing.T) {
 	a := test.NewApp()
 	defer a.Quit()
 	s := newStudio(a)
+	defer s.shutdown()
 	s.w.Show()
 	screenshot(t, s.w, "main.png")
 	if len(s.buttons) != 18 {
 		t.Fatalf("%d inputs", len(s.buttons))
 	}
 	test.Tap(s.buttons[17])
-	var value *widget.SelectEntry
-	var add *widget.Button
-	overlay := s.w.Canvas().Overlays().Top()
-	if overlay == nil {
-		t.Fatal("editor did not open")
+	if s.w.Canvas().Overlays().Top() != nil {
+		t.Fatal("key selection opened a modal")
 	}
-	// Dialog content is exposed through the widget renderer.
-	var inspect func(fyne.CanvasObject)
-	visited := map[fyne.CanvasObject]bool{}
-	inspect = func(o fyne.CanvasObject) {
-		if visited[o] {
-			return
-		}
-		visited[o] = true
-		switch w := o.(type) {
-		case *widget.SelectEntry:
-			value = w
-		case *widget.Button:
-			if w.Text == "設定に追加" {
-				add = w
-			}
-		}
-		if w, ok := o.(fyne.Widget); ok {
-			for _, child := range test.WidgetRenderer(w).Objects() {
-				walk(child, inspect)
-			}
-		}
-	}
-	walk(overlay, inspect)
-	if value == nil || add == nil {
-		t.Fatal("editor controls missing")
-	}
+	value, add := s.editor.value, s.editor.apply
 	value.SetText("invalid-key")
+	if !add.Disabled() {
+		t.Fatal("invalid binding can be applied")
+	}
 	test.Tap(add)
 	if len(s.p.Bindings) != 0 {
 		t.Fatal("invalid binding was stored")
 	}
 	value.SetText("ctrl+shift+s")
+	if !s.hasDraft() || len(s.p.Bindings) != 0 || !s.saveButton.Disabled() {
+		t.Fatal("draft mutated applied state or can be saved")
+	}
 	screenshot(t, s.w, "editor.png")
 	test.Tap(add)
 	b, ok := s.p.Get(1, 18)
@@ -99,4 +77,27 @@ func screenshot(t *testing.T, w fyne.Window, name string) {
 	if err := png.Encode(f, w.Canvas().Capture()); err != nil {
 		t.Fatal(err)
 	}
+}
+
+func visitWidgets(root fyne.CanvasObject, visit func(fyne.CanvasObject)) {
+	seen := map[fyne.CanvasObject]bool{}
+	var inspect func(fyne.CanvasObject)
+	inspect = func(o fyne.CanvasObject) {
+		if seen[o] {
+			return
+		}
+		seen[o] = true
+		visit(o)
+		if c, ok := o.(*fyne.Container); ok {
+			for _, child := range c.Objects {
+				inspect(child)
+			}
+		}
+		if w, ok := o.(fyne.Widget); ok {
+			for _, child := range test.WidgetRenderer(w).Objects() {
+				inspect(child)
+			}
+		}
+	}
+	inspect(root)
 }

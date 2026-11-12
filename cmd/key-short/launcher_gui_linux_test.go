@@ -3,7 +3,7 @@ package main
 import (
 	"os"
 	"path/filepath"
-	"strings"
+
 	"testing"
 
 	"fyne.io/fyne/v2"
@@ -11,29 +11,6 @@ import (
 	"fyne.io/fyne/v2/widget"
 	"key-short/internal/profile"
 )
-
-func visitWidgets(root fyne.CanvasObject, visit func(fyne.CanvasObject)) {
-	seen := map[fyne.CanvasObject]bool{}
-	var inspect func(fyne.CanvasObject)
-	inspect = func(o fyne.CanvasObject) {
-		if seen[o] {
-			return
-		}
-		seen[o] = true
-		visit(o)
-		if c, ok := o.(*fyne.Container); ok {
-			for _, child := range c.Objects {
-				inspect(child)
-			}
-		}
-		if w, ok := o.(fyne.Widget); ok {
-			for _, child := range test.WidgetRenderer(w).Objects() {
-				inspect(child)
-			}
-		}
-	}
-	inspect(root)
-}
 
 func TestInstalledApplicationPicker(t *testing.T) {
 	root := t.TempDir()
@@ -53,25 +30,14 @@ func TestInstalledApplicationPicker(t *testing.T) {
 	defer s.shutdown()
 	s.w.Show()
 	s.edit(1)
-	editor := s.w.Canvas().Overlays().Top()
-	var kind *widget.Select
-	var choose, add *widget.Button
-	visitWidgets(editor, func(o fyne.CanvasObject) {
-		switch w := o.(type) {
-		case *widget.Select:
-			if len(w.Options) == 4 && w.Options[3] == "ランチャー" {
-				kind = w
-			}
-		case *widget.Button:
-			if w.Text == "アプリを選択…" {
-				choose = w
-			}
-			if w.Text == "設定に追加" {
-				add = w
-			}
+	kind, add := s.editor.kind, s.editor.apply
+	var choose *widget.Button
+	visitWidgets(s.editor.box, func(o fyne.CanvasObject) {
+		if b, ok := o.(*widget.Button); ok && b.Text == "アプリを選択…" {
+			choose = b
 		}
 	})
-	if kind == nil || choose == nil || add == nil {
+	if choose == nil {
 		t.Fatal("picker controls missing")
 	}
 	kind.SetSelected("ランチャー")
@@ -110,36 +76,8 @@ func TestLauncherEditorSavesQuotedCommandAndReuseOption(t *testing.T) {
 	defer s.shutdown()
 	s.w.Show()
 	test.Tap(s.buttons[1])
-	var kind, mode *widget.Select
-	var command *widget.Entry
-	var reuse *widget.Check
-	var add *widget.Button
-	visitWidgets(s.w.Canvas().Overlays().Top(), func(o fyne.CanvasObject) {
-		switch w := o.(type) {
-		case *widget.Select:
-			if len(w.Options) == 4 && w.Options[3] == "ランチャー" {
-				kind = w
-			}
-			if len(w.Options) == 2 && w.Options[1] == "コマンドラインで実行" {
-				mode = w
-			}
-		case *widget.Entry:
-			if strings.HasPrefix(w.PlaceHolder, "chromium ") {
-				command = w
-			}
-		case *widget.Check:
-			if strings.HasPrefix(w.Text, "起動済みなら") {
-				reuse = w
-			}
-		case *widget.Button:
-			if w.Text == "設定に追加" {
-				add = w
-			}
-		}
-	})
-	if kind == nil || mode == nil || command == nil || reuse == nil || add == nil {
-		t.Fatal("launcher controls missing")
-	}
+	kind, mode := s.editor.kind, s.editor.launch.mode
+	command, reuse, add := s.editor.launch.command, s.editor.launch.reuse, s.editor.apply
 	kind.SetSelected("ランチャー")
 	mode.SetSelected("コマンドラインで実行")
 	line := `chromium --remote-debugging-port=9222 --user-data-dir="/tmp/debug profile"`
