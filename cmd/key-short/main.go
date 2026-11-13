@@ -2,13 +2,19 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"flag"
 	"fmt"
 	"log/slog"
 	"os"
 	"os/signal"
+	"path/filepath"
+	"runtime"
 	"syscall"
+	"time"
 
+	"key-short/internal/autostart"
+	"key-short/internal/daemon"
 	"key-short/internal/device"
 	"key-short/internal/host"
 	"key-short/internal/launcher"
@@ -24,14 +30,24 @@ func run() int {
 	apply := flag.String("apply", "", "JSON 設定を USB に書き込む")
 	id := flag.String("device", "", "対象 USB バス:アドレス（例: 002:003）")
 	verbose := flag.Bool("verbose", false, "DEBUG ログを表示")
+	startup := flag.String("autostart", "", "自動起動の status / enable / disable / start / stop / restart")
+	backend := flag.String("autostart-backend", "auto", "自動起動方式: auto / systemd / xdg")
+	daemonProfile := flag.String("daemon", "", "自動起動用の管理付き監視（フォアグラウンド実行）")
+	daemonLogs := flag.Bool("daemon-logs", false, "管理付き監視の stdout/stderr を状態フォルダーのログに保存")
+	daemonState := flag.String("daemon-state", "", "管理付き監視の状態フォルダー")
 	listen := flag.String("listen", "", "JSON のランチャー割り当てを常駐監視")
 	launch := flag.String("launch", "", "JSON の指定スロットの起動・前面化を実行")
-	guiProfile := flag.String("profile", "", "GUI で開く JSON 設定")
+	guiProfile := flag.String("profile", "", "GUI または -autostart enable で使用する JSON 設定")
 	slot := flag.Int("slot", 1, "-launch の入力番号 (1〜18)")
 	layer := flag.Int("layer", 1, "-launch のレイヤー (1〜3)")
 	flag.Parse()
-	logging.Setup(*verbose)
 	modes := 0
+	if *startup != "" {
+		modes++
+	}
+	if *daemonProfile != "" {
+		modes++
+	}
 	if *list {
 		modes++
 	}
@@ -47,12 +63,74 @@ func run() int {
 	if *launch != "" {
 		modes++
 	}
-	if modes > 1 || flag.NArg() > 0 {
-		slog.Error("-list / -dry-run / -apply / -listen / -launch は1つだけ指定してください")
+	if modes > 1 || flag.NArg() > 0 || (*daemonState != "" && *daemonProfile == "") {
+		fmt.Fprintln(os.Stderr, "ERROR 実行モードは1つだけ指定してください。-daemon-state は -daemon と併用します")
 		return 1
 	}
-	if *listen != "" || *launch != "" {
+	if *daemonLogs {
+		if *daemonProfile == "" || runtime.GOOS != "linux" {
+			fmt.Fprintln(os.Stderr, "ERROR -daemon-logs は Linux の -daemon と併用してください")
+			return 1
+		}
+		dir := *daemonState
+		if dir == "" {
+			var err error
+			dir, err = launcher.StateDir()
+			if err != nil {
+				fmt.Fprintln(os.Stderr, "ERROR", err)
+				return 1
+			}
+		}
+		if err := os.MkdirAll(dir, 0700); err != nil {
+			fmt.Fprintln(os.Stderr, "ERROR", err)
+			return 1
+		}
+		stdout, err := os.OpenFile(filepath.Join(dir, "daemon.stdout.log"), os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0600)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "ERROR", err)
+			return 1
+		}
+		defer stdout.Close()
+		stderr, err := os.OpenFile(filepath.Join(dir, "daemon.stderr.log"), os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0600)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "ERROR", err)
+			return 1
+		}
+		defer stderr.Close()
+		os.Stdout = stdout
+		os.Stderr = stderr
+	}
+	logging.Setup(*verbose)
+	if *startup != "" {
+		m, err := autostart.New()
+		if err != nil {
+			slog.Error("自動起動を設定できません", "error", err)
+			return 1
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+		defer cancel()
+		if err = m.Apply(ctx, *startup, *guiProfile, *backend); err != nil {
+			slog.Error("自動起動の操作に失敗しました", "error", err)
+			return 1
+		}
+		status, err := m.Status(ctx)
+		if err != nil {
+			slog.Error("自動起動の状態を確認できません", "error", err)
+			return 1
+		}
+		data, _ := json.MarshalIndent(status, "", "  ")
+		fmt.Println(string(data))
+		return 0
+	}
+	if *daemonProfile != "" && runtime.GOOS != "linux" {
+		slog.Error("管理付き監視は Linux 用です")
+		return 1
+	}
+	if *listen != "" || *launch != "" || *daemonProfile != "" {
 		path := *listen
+		if *daemonProfile != "" {
+			path = *daemonProfile
+		}
 		if path == "" {
 			path = *launch
 		}
@@ -61,7 +139,7 @@ func run() int {
 			slog.Error("設定を読み込めません", "error", err)
 			return 1
 		}
-		m, err := launcher.New("")
+		m, err := launcher.New(*daemonState)
 		if err != nil {
 			slog.Error("ランチャーを初期化できません", "error", err)
 			return 1
@@ -88,7 +166,20 @@ func run() int {
 			slog.Error("監視を開始できません", "error", err)
 			return 1
 		}
-		defer stop()
+		var control *daemon.Server
+		defer func() {
+			stop()
+			if control != nil {
+				control.Close()
+			}
+		}()
+		if *daemonProfile != "" {
+			control, err = daemon.Serve(m.StateDir(), cancel)
+			if err != nil {
+				slog.Error("監視の制御ソケットを開始できません", "error", err)
+				return 1
+			}
+		}
 		select {
 		case <-ctx.Done():
 		case err := <-done:

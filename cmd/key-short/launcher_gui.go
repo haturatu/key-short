@@ -35,6 +35,8 @@ func (s *studio) launcherControls() fyne.CanvasObject {
 	s.monitorButton = widget.NewButton("ランチャー監視を開始", func() {
 		if s.monitorStop != nil {
 			s.stopMonitoring()
+		} else if s.daemonRunning {
+			s.manageAutostart("stop")
 		} else {
 			s.startMonitoring()
 		}
@@ -51,11 +53,11 @@ func (s *studio) launcherControls() fyne.CanvasObject {
 	}
 	help := widget.NewLabel("アプリ起動には常駐監視が必要です。JSON の保存と USB への書き込み後に開始してください。")
 	help.Wrapping = fyne.TextWrapWord
-	return container.NewVBox(widget.NewLabelWithStyle("アプリランチャー", fyne.TextAlignLeading, fyne.TextStyle{Bold: true}), help, s.monitorButton, s.resident)
+	return container.NewVBox(widget.NewLabelWithStyle("アプリランチャー", fyne.TextAlignLeading, fyne.TextStyle{Bold: true}), help, s.monitorButton, s.resident, s.autostartControls())
 }
 
 func (s *studio) startMonitoring() {
-	if s.busy || s.hasDraft() {
+	if s.busy || s.hasDraft() || s.daemonRunning {
 		return
 	}
 	if s.monitorStop != nil {
