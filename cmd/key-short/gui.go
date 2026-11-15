@@ -73,7 +73,7 @@ type studio struct {
 	historyCurrent                         profile.Profile
 	undoStack, redoStack                   []profile.Profile
 	undoButton, redoButton                 *widget.Button
-	nextAction                             *widget.Button
+	nextAction                             *compactButton
 	editState, connectionState             *widget.Label
 	monitorPause                           string
 	hiddenButton                           *widget.Button
@@ -129,7 +129,7 @@ func runGUI(profilePath string) error {
 func newStudio(a fyne.App) *studio {
 	ctx, cancel := context.WithCancel(context.Background())
 	s := &studio{app: a, ctx: ctx, cancel: cancel, w: a.NewWindow("Key Short"), p: profile.New(), layer: 1, selectedSlot: 1, loading: true, selectedSlots: map[int]bool{}}
-	s.w.Resize(fyne.NewSize(1180, 860))
+	s.w.Resize(fyne.NewSize(1180, 680))
 	s.status = widget.NewLabel("キーを選んで編集してください。有効な変更は自動反映します。")
 	s.status.Wrapping = fyne.TextWrapWord
 	s.count = widget.NewLabel("")
@@ -181,7 +181,7 @@ func newStudio(a fyne.App) *studio {
 	s.layouts.Options = append(s.layouts.Options, "カスタム配置…")
 	custom := widget.NewButton("配置を変更…", s.layoutDialog)
 	s.multiSelect = widget.NewCheck("複数選択", func(bool) { s.selectedSlots = map[int]bool{}; s.refresh() })
-	s.keyHost = container.NewVBox()
+	s.keyHost = container.NewStack()
 	s.led = widget.NewSelect([]string{"変更しない", "0 · 消灯", "1 · モード1", "2 · モード2"}, func(v string) {
 		if s.loading {
 			return
@@ -196,11 +196,9 @@ func newStudio(a fyne.App) *studio {
 	})
 	s.led.SetSelectedIndex(0)
 	launchControls := s.launcherControls()
-	note := widget.NewLabel("割り当てをドラッグして別のキーへ移動できます。配置の変更だけでは USB に書き込みません。")
-	note.Wrapping = fyne.TextWrapWord
 	s.layoutNote = widget.NewLabel("機種未確定 · 配置を選択してください。")
 	s.layoutNote.Wrapping = fyne.TextWrapWord
-	s.undoButton = widget.NewButtonWithIcon("元に戻す", theme.ContentUndoIcon(), s.undo)
+	s.undoButton = widget.NewButtonWithIcon("戻す", theme.ContentUndoIcon(), s.undo)
 	s.redoButton = widget.NewButtonWithIcon("やり直す", theme.ContentRedoIcon(), s.redo)
 	copy := widget.NewButtonWithIcon("コピー", theme.ContentCopyIcon(), s.copyAssignments)
 	paste := widget.NewButtonWithIcon("貼り付け", theme.ContentPasteIcon(), s.pasteAssignments)
@@ -212,10 +210,12 @@ func newStudio(a fyne.App) *studio {
 		d.Show()
 	})
 	s.controls = append(s.controls, settings)
-	keyArea := container.NewVBox(widget.NewLabelWithStyle("キー配置", fyne.TextAlignLeading, fyne.TextStyle{Bold: true}), container.NewBorder(nil, nil, nil, custom, s.layouts), widget.NewAccordion(widget.NewAccordionItem("配置と操作のヒント", container.NewVBox(s.layoutNote, note))), container.NewHBox(s.multiSelect, copy, paste, duplicate), s.keyHost)
-	s.editorHost = container.NewVBox()
+	help := widget.NewButton("操作のヒント…", s.showEditingHelp)
+	keyArea := container.NewBorder(container.NewVBox(container.NewBorder(nil, nil, nil, custom, s.layouts), container.NewHBox(s.multiSelect, copy, paste, duplicate)), nil, nil, nil, s.keyHost)
+	s.editorHost = container.NewStack()
 	s.keyScroll = container.NewScroll(keyArea)
-	split, workspace := newWorkspace(container.NewPadded(s.keyScroll), container.NewPadded(container.NewVScroll(s.editorHost)))
+	s.keyScroll.Direction = container.ScrollNone
+	split, workspace := newWorkspace(container.NewPadded(s.keyScroll), container.NewPadded(s.editorHost))
 	s.workspace = workspace
 	open := widget.NewButtonWithIcon("JSON を開く", theme.FolderOpenIcon(), s.open)
 	s.saveButton = widget.NewButtonWithIcon("保存", theme.DocumentSaveIcon(), s.save)
@@ -223,13 +223,13 @@ func newStudio(a fyne.App) *studio {
 	s.saveAsButton = saveAs
 	s.previewButton = widget.NewButton("送信データを確認", s.preview)
 	s.writeButton = widget.NewButtonWithIcon("USB に反映…", theme.UploadIcon(), s.write)
-	s.nextAction = widget.NewButton("", nil)
+	s.nextAction = newCompactButton("", nil)
 	s.nextAction.Importance = widget.HighImportance
 	s.hiddenButton = widget.NewButton("非表示の割り当てを確認…", s.hiddenAssignmentsDialog)
 	s.controls = append(s.controls, s.devices, rescan, s.layers, s.layouts, custom, s.led, open, s.saveButton, saveAs, s.previewButton, s.writeButton)
 	s.progress = widget.NewProgressBar()
 	s.progress.Hide()
-	header := container.NewVBox(container.NewGridWithColumns(3, s.undoButton, s.redoButton, settings), container.NewBorder(nil, nil, widget.NewLabelWithStyle("Key Short", fyne.TextAlignLeading, fyne.TextStyle{Bold: true}), s.layers, container.NewBorder(nil, nil, nil, rescan, s.devices)), s.count)
+	header := container.NewVBox(container.NewBorder(nil, nil, widget.NewLabelWithStyle("Key Short", fyne.TextAlignLeading, fyne.TextStyle{Bold: true}), container.NewHBox(s.layers, settings), container.NewBorder(nil, nil, nil, rescan, s.devices)), container.NewBorder(nil, nil, nil, container.NewHBox(s.undoButton, s.redoButton, help), s.count))
 	fileActions := widget.NewButton("ファイル操作…", func() {
 		var d dialog.Dialog
 		action := func(label string, run func()) *widget.Button {
@@ -239,7 +239,12 @@ func newStudio(a fyne.App) *studio {
 		d.Show()
 	})
 	s.controls = append(s.controls, fileActions)
-	footer := container.NewVBox(s.connectionState, container.NewGridWithColumns(2, s.editState, s.jsonState, s.usbState, s.monitorStatus), s.hiddenButton, s.nextAction, container.NewGridWithColumns(3, s.saveButton, s.writeButton, fileActions), s.progress, s.status)
+	for _, label := range []*widget.Label{s.count, s.status, s.editState, s.jsonState, s.usbState, s.monitorStatus} {
+		label.Wrapping = fyne.TextWrapOff
+		label.Truncation = fyne.TextTruncateEllipsis
+	}
+	stateDetails := widget.NewButton("状態の詳細…", s.showWorkflowDetails)
+	footer := container.NewVBox(container.NewBorder(nil, nil, nil, stateDetails, container.NewGridWithColumns(4, s.editState, s.jsonState, s.usbState, s.monitorStatus)), container.NewBorder(nil, nil, nil, container.NewHBox(fileActions, s.saveButton, s.writeButton), s.nextAction), s.progress, s.status)
 	s.w.SetContent(container.NewPadded(container.NewBorder(header, footer, nil, nil, split)))
 	s.w.SetCloseIntercept(func() { s.requestClose(false) })
 	s.installShortcuts()

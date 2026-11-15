@@ -76,14 +76,15 @@ func (s *studio) newBindingEditor(layer, slot int) *bindingEditor {
 	}
 	e.launch = s.newLaunchEditor(existing.Launch, label)
 	e.record = widget.NewButton("キー入力から記録…", func() { s.recordKeys(e.value) })
+	e.search = widget.NewButton("操作を検索…", e.searchOperations)
+	tools := container.NewGridWithColumns(2, e.search, e.record)
 	valueForm := widget.NewForm(widget.NewFormItem("割り当て", e.value))
-	note := widget.NewLabel("A や Ctrl + PageUp はキー入力から記録できます。連続操作は , で区切ります（最大5操作）。")
-	note.Wrapping = fyne.TextWrapWord
+
 	e.kind = widget.NewSelect([]string{"キーボード", "メディア", "マウス", "ランチャー"}, func(v string) {
+		tools.Show()
 		e.launch.box.Hide()
 		valueForm.Show()
 		e.record.Hide()
-		note.Show()
 		switch v {
 		case "キーボード":
 			e.record.Show()
@@ -93,9 +94,9 @@ func (s *studio) newBindingEditor(layer, slot int) *bindingEditor {
 		case "マウス":
 			e.value.SetOptions(operationOptions("マウス"))
 		case "ランチャー":
+			tools.Hide()
 			e.launch.box.Show()
 			valueForm.Hide()
-			note.Hide()
 		}
 		e.validate()
 	})
@@ -127,8 +128,14 @@ func (s *studio) newBindingEditor(layer, slot int) *bindingEditor {
 			s.activateSelection(layer, slot)
 		}
 	})
-	e.search = widget.NewButton("操作を検索…", e.searchOperations)
-	e.box = container.NewVBox(widget.NewLabelWithStyle(fmt.Sprintf("%s の編集 · レイヤー %d", s.inputName(slot), layer), fyne.TextAlignLeading, fyne.TextStyle{Bold: true}), widget.NewForm(widget.NewFormItem("操作の種類", e.kind)), valueForm, e.validation, container.NewGridWithColumns(2, e.search, e.record), note, e.launch.box, e.reset, widget.NewAccordion(widget.NewAccordionItem("割り当ての管理", container.NewVBox(e.clear, e.remove, wrappedLabel("除外は実機の設定を保持します。無効化は USB へ無操作のデータを送ります。転送後は実機で動作を確認してください。"))), widget.NewAccordionItem("詳細（内部データ）", e.details)))
+	management := widget.NewButton("割り当ての管理…", func() {
+		d := dialog.NewCustom("割り当ての管理", "閉じる", container.NewVBox(e.clear, e.remove, wrappedLabel("除外は実機の設定を保持します。無効化は USB へ無操作のデータを送ります。転送後は実機で動作を確認してください。")), s.w)
+		d.Resize(fyne.NewSize(520, 250))
+		d.Show()
+	})
+	details := widget.NewButton("内部データ…", func() { dialog.ShowCustom("割り当ての内部データ", "閉じる", e.details, s.w) })
+	e.box = container.NewVBox(widget.NewLabelWithStyle(fmt.Sprintf("%s の編集 · レイヤー %d", s.inputName(slot), layer), fyne.TextAlignLeading, fyne.TextStyle{Bold: true}), widget.NewForm(widget.NewFormItem("操作の種類", e.kind)), valueForm, e.validation, tools, e.launch.box, container.NewHBox(management, details, e.reset))
+
 	if ok {
 		e.kind.SetSelected(map[string]string{"keyboard": "キーボード", "media": "メディア", "mouse": "マウス", "launcher": "ランチャー"}[existing.Kind])
 		value := existing.Value
@@ -164,13 +171,13 @@ func (e *bindingEditor) validate() {
 	e.dirty = !reflect.DeepEqual(e.original, binding)
 	q, err := e.s.p.WithBinding(binding)
 	e.valid = err == nil
-	text := "有効な変更は作業中の設定へ自動反映します。"
+	text := "有効な入力は自動反映します。"
 	if e.dirty && err == nil {
 		e.original = binding
 		e.dirty = false
 		e.s.p = q
 		e.s.changed()
-		text = "作業中の設定に反映済み。JSON 保存と USB 反映は別に実行してください。"
+		text = "作業中の設定に反映済み。保存・USB 反映は下部から。"
 	} else if e.dirty {
 		text = "未反映: " + err.Error()
 	}
@@ -196,7 +203,9 @@ func (e *bindingEditor) updateControls() {
 		e.launch.testButton.Enable()
 	}
 	if !e.dirty {
-		e.reset.Disable()
+		e.reset.Hide()
+	} else {
+		e.reset.Show()
 	}
 	if _, ok := e.s.p.Get(e.layer, e.slot); !ok {
 		e.remove.Disable()

@@ -58,9 +58,9 @@ func (s *studio) refreshWorkflow() {
 	if s.nextAction == nil {
 		return
 	}
-	s.editState.SetText("キーの編集: 作業中の設定に反映済み")
+	s.editState.SetText("編集: 自動反映済み")
 	if s.hasDraft() {
-		s.editState.SetText("キーの編集: 入力エラーあり・最後の有効な設定を保持")
+		s.editState.SetText("編集: 入力エラー・直前の設定を保持")
 	}
 	s.connectionState.SetText("USB 未接続 · オフラインで設定を編集できます")
 	if len(s.devices.Options) > 0 && s.devices.Selected == "" {
@@ -90,7 +90,7 @@ func (s *studio) refreshWorkflow() {
 	case len(hidden) > 0:
 		label, action = "非表示の割り当てを確認…", s.hiddenAssignmentsDialog
 	case len(s.p.Bindings) == 0 && s.p.LED == nil && !s.dirty && s.profilePath == "":
-		label, action = "キーを選んで割り当てを設定", focusEditor
+		label, action = "割り当てを設定", focusEditor
 	case s.dirty || s.profilePath == "":
 		label, action = "JSON に保存…", s.save
 	case s.devices.Selected == "":
@@ -105,7 +105,7 @@ func (s *studio) refreshWorkflow() {
 		label, action = "実機のキー・ノブで動作を確認してください", nil
 	}
 	if jobs, err := s.p.Jobs(); err == nil && len(jobs) == 0 && label == "USB に反映…" {
-		label, action = "キーを選んで割り当てを設定", nil
+		label, action = "割り当てを設定", nil
 	}
 	s.nextAction.SetText(label)
 	s.nextAction.OnTapped = action
@@ -190,5 +190,22 @@ func (s *studio) hiddenAssignmentsDialog() {
 	})
 	d = dialog.NewCustom("非表示の割り当て", "閉じる", container.NewBorder(note, container.NewVBox(restore, remove), nil, nil, container.NewVScroll(list)), s.w)
 	d.Resize(fyne.NewSize(620, 420))
+	d.Show()
+}
+
+func (s *studio) showWorkflowDetails() {
+	text := strings.Join([]string{s.connectionState.Text, s.editState.Text, s.jsonState.Text, s.usbState.Text, s.monitorStatus.Text, "", s.status.Text}, "\n")
+	box := container.NewVBox(wrappedLabel(text))
+	if len(s.hiddenBindings(s.p.EffectiveLayout())) > 0 {
+		box.Add(widget.NewButton("非表示の割り当てを確認…", s.hiddenAssignmentsDialog))
+	}
+	d := dialog.NewCustom("設定・転送・監視の状態", "閉じる", box, s.w)
+	d.Resize(fyne.NewSize(580, 380))
+	d.Show()
+}
+func (s *studio) showEditingHelp() {
+	text := s.layoutNote.Text + "\n\n有効な編集は作業中の設定に自動反映します。JSON 保存と USB 転送はそれぞれ明示操作です。\n\n割り当てをドラッグすると移動・交換できます。複数選択とコピー・貼り付けも使用できます。\n\nキー入力から記録するか、操作名を検索して割り当てを選べます。連続操作はカンマで区切り、最大5操作です。\n\nCtrl+S: 保存 / Ctrl+Z: 元に戻す / Ctrl+Shift+Z: やり直す / Ctrl+C・V: コピー・貼り付け"
+	d := dialog.NewCustom("編集と配置のヒント", "閉じる", wrappedLabel(text), s.w)
+	d.Resize(fyne.NewSize(620, 440))
 	d.Show()
 }

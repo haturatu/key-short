@@ -5,8 +5,8 @@ import (
 	"fyne.io/fyne/v2/container"
 )
 
-// Each pane belongs to exactly one visible host, preserving drafts and scroll
-// positions when the window changes between the split and tabbed presentations.
+// Each pane belongs to exactly one visible host, preserving drafts and
+// selection when the window changes between split and tabbed presentations.
 type workspaceLayout struct {
 	left, right                              fyne.CanvasObject
 	split                                    *container.Split

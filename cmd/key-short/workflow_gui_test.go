@@ -93,7 +93,7 @@ func TestEmptyOfflineProfileGuidesEditingBeforeSaving(t *testing.T) {
 	s.devices.Options = nil
 	s.devices.ClearSelected()
 	s.refresh()
-	if s.nextAction.Text != "キーを選んで割り当てを設定" {
+	if s.nextAction.Text != "割り当てを設定" {
 		t.Fatal("empty profile suggests saving before editing", s.nextAction.Text)
 	}
 	test.Tap(s.nextAction)

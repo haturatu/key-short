@@ -2,7 +2,6 @@ package main
 
 import (
 	"encoding/json"
-	"fmt"
 	"path/filepath"
 
 	"fyne.io/fyne/v2"
@@ -15,15 +14,7 @@ import (
 
 func (s *studio) rebuildLayout() {
 	l := s.p.EffectiveLayout()
-	grid := container.NewGridWithColumns(l.Columns)
-	for _, slot := range l.Slots {
-		grid.Add(s.buttons[slot-1])
-	}
-	knobs := container.NewVBox()
-	for i, k := range l.Knobs {
-		knobs.Add(container.NewVBox(widget.NewLabelWithStyle(fmt.Sprintf("ノブ %d · 左 / 押す / 右", i+1), fyne.TextAlignLeading, fyne.TextStyle{Bold: true}), container.NewGridWithColumns(3, s.buttons[k.Left-1], s.buttons[k.Press-1], s.buttons[k.Right-1])))
-	}
-	s.keyHost.Objects = []fyne.CanvasObject{layoutArrangement(l, grid, knobs)}
+	s.keyHost.Objects = []fyne.CanvasObject{s.deviceDiagram(l)}
 	s.keyHost.Refresh()
 	s.syncLayoutSelect()
 }

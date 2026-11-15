@@ -6,6 +6,7 @@ import (
 
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/dialog"
+	"fyne.io/fyne/v2/theme"
 	"fyne.io/fyne/v2/widget"
 	"key-short/internal/protocol"
 )
@@ -14,12 +15,14 @@ import (
 // dispatch a drag to the source widget through the end of the pointer gesture.
 type assignmentButton struct {
 	widget.Button
-	studio       *studio
-	slot         int
-	dragging     bool
-	dragLayer    int
-	signature    string
-	lastPosition fyne.Position
+	studio                  *studio
+	slot                    int
+	dragging                bool
+	dragLayer               int
+	signature               string
+	lastPosition            fyne.Position
+	fullText                string
+	fittedWidth, fittedFont float32
 }
 
 var _ fyne.Draggable = (*assignmentButton)(nil)
@@ -40,7 +43,26 @@ func newAssignmentButton(s *studio, slot int) *assignmentButton {
 	b.ExtendBaseWidget(b)
 	return b
 }
-func (b *assignmentButton) MinSize() fyne.Size { return fyne.NewSize(100, 86) }
+func (b *assignmentButton) MinSize() fyne.Size { return fyne.NewSize(70, 48) }
+func (b *assignmentButton) SetText(text string) {
+	if text != b.fullText {
+		b.fittedWidth = 0
+	}
+	b.fullText = text
+	b.fitText()
+}
+func (b *assignmentButton) fitText() {
+	width, font := fyne.Max(70, b.Size().Width), b.Theme().Size(theme.SizeNameText)
+	if width == b.fittedWidth && font == b.fittedFont {
+		return
+	}
+	b.fittedWidth, b.fittedFont = width, font
+	text := fittedButtonText(b.fullText, width, font)
+	if b.Text != text {
+		b.Button.SetText(text)
+	}
+}
+func (b *assignmentButton) Resize(size fyne.Size) { b.Button.Resize(size); b.fitText() }
 func emptyAssignment(b protocol.Binding) bool {
 	return b.Kind == "keyboard" && strings.EqualFold(strings.TrimSpace(b.Value), "none")
 }
