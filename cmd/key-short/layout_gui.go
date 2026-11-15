@@ -23,18 +23,21 @@ func (s *studio) rebuildLayout() {
 	for i, k := range l.Knobs {
 		knobs.Add(container.NewVBox(widget.NewLabelWithStyle(fmt.Sprintf("ノブ %d · 左 / 押す / 右", i+1), fyne.TextAlignLeading, fyne.TextStyle{Bold: true}), container.NewGridWithColumns(3, s.buttons[k.Left-1], s.buttons[k.Press-1], s.buttons[k.Right-1])))
 	}
-	var arrangement fyne.CanvasObject = container.NewVBox(grid, knobs)
-	switch l.KnobPosition {
-	case "top":
-		arrangement = container.NewVBox(knobs, grid)
-	case "left":
-		arrangement = container.NewGridWithColumns(2, knobs, grid)
-	case "right":
-		arrangement = container.NewGridWithColumns(2, grid, knobs)
-	}
-	s.keyHost.Objects = []fyne.CanvasObject{arrangement}
+	s.keyHost.Objects = []fyne.CanvasObject{layoutArrangement(l, grid, knobs)}
 	s.keyHost.Refresh()
 	s.syncLayoutSelect()
+}
+func layoutArrangement(l devlayout.Layout, grid, knobs fyne.CanvasObject) fyne.CanvasObject {
+	switch l.KnobPosition {
+	case "top":
+		return container.NewVBox(knobs, grid)
+	case "left":
+		return container.NewGridWithColumns(2, knobs, grid)
+	case "right":
+		return container.NewGridWithColumns(2, grid, knobs)
+	default:
+		return container.NewVBox(grid, knobs)
+	}
 }
 func (s *studio) syncLayoutSelect() {
 	l := s.p.EffectiveLayout()

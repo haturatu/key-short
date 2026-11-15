@@ -149,3 +149,17 @@ func wrappedLabel(text string) *widget.Label {
 	l.Wrapping = fyne.TextWrapWord
 	return l
 }
+
+func (s *studio) inputName(slot int) string {
+	if slot <= 12 {
+		return fmt.Sprintf("K%d", slot)
+	}
+	for i, k := range s.p.EffectiveLayout().Knobs {
+		for j, mapped := range []int{k.Left, k.Press, k.Right} {
+			if mapped == slot {
+				return fmt.Sprintf("ノブ%d %s", i+1, []string{"左", "押す", "右"}[j])
+			}
+		}
+	}
+	return protocol.SlotName(slot)
+}

@@ -18,6 +18,7 @@ type visualLayoutEditor struct {
 	selected    int
 	tiles       []*layoutTile
 	hint        *widget.Label
+	preview     *fyne.Container
 }
 
 // A tile supports the same swap through a drag or two keyboard/click selections.
@@ -108,6 +109,10 @@ func (e *visualLayoutEditor) render() {
 	e.hint.SetText(hint)
 	e.grid.Refresh()
 	e.knobs.Refresh()
+	if e.preview != nil {
+		e.preview.Objects = []fyne.CanvasObject{layoutArrangement(e.draft, e.grid, e.knobs)}
+		e.preview.Refresh()
+	}
 }
 func (s *studio) layoutDialog() {
 	s.syncLayoutSelect()
@@ -118,6 +123,7 @@ func (s *studio) layoutDialog() {
 	e := &visualLayoutEditor{s: s, draft: l.Clone(), selected: -1, grid: container.NewGridWithColumns(l.Columns), knobs: container.NewVBox(), hint: widget.NewLabel("")}
 	e.hint.Wrapping = fyne.TextWrapWord
 	e.draft.Preset = "custom"
+	e.preview = container.NewVBox()
 	options := func(n int) []string {
 		out := []string{}
 		for i := 1; i <= n; i++ {
@@ -186,7 +192,7 @@ func (s *studio) layoutDialog() {
 		e.selected = -1
 		e.render()
 	}
-	position.OnChanged = func(string) { e.draft.KnobPosition = codes[position.SelectedIndex()] }
+	position.OnChanged = func(string) { e.draft.KnobPosition = codes[position.SelectedIndex()]; e.render() }
 	var d dialog.Dialog
 	apply := widget.NewButton("この配置を使う", func() {
 		if err := e.draft.Validate(); err != nil {
@@ -205,7 +211,7 @@ func (s *studio) layoutDialog() {
 	note.Wrapping = fyne.TextWrapWord
 	form := widget.NewForm(widget.NewFormItem("キー数", keys), widget.NewFormItem("列数", cols), widget.NewFormItem("ノブ数", knobs), widget.NewFormItem("ノブの位置", position))
 	e.render()
-	d = dialog.NewCustom("ビジュアル配置エディター", "キャンセル", container.NewBorder(container.NewVBox(note, form, e.hint), container.NewGridWithColumns(2, reset, apply), nil, nil, container.NewVScroll(container.NewVBox(e.grid, e.knobs))), s.w)
+	d = dialog.NewCustom("ビジュアル配置エディター", "キャンセル", container.NewBorder(container.NewVBox(note, form, e.hint), container.NewGridWithColumns(2, reset, apply), nil, nil, container.NewScroll(e.preview)), s.w)
 	d.Resize(fyne.NewSize(650, 650))
 	d.Show()
 }

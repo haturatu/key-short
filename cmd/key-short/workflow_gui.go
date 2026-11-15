@@ -63,6 +63,9 @@ func (s *studio) refreshWorkflow() {
 		s.editState.SetText("キーの編集: 入力エラーあり・最後の有効な設定を保持")
 	}
 	s.connectionState.SetText("USB 未接続 · オフラインで設定を編集できます")
+	if len(s.devices.Options) > 0 && s.devices.Selected == "" {
+		s.connectionState.SetText("USB デバイスを選択してください。選択前もオフライン編集できます。")
+	}
 	if s.devices.Selected != "" {
 		s.connectionState.SetText("USB 接続先: " + s.devices.Selected)
 	}
@@ -77,13 +80,21 @@ func (s *studio) refreshWorkflow() {
 	case s.busy:
 		label, action = "USB 転送中…", nil
 	case s.hasDraft():
-		label, action = "入力エラーを修正する", func() { s.w.Canvas().Focus(s.editor.value) }
+		label, action = "入力エラーを修正する", func() {
+			if s.workspace != nil && s.workspace.narrow {
+				s.workspace.tabs.SelectIndex(1)
+			}
+			s.w.Canvas().Focus(s.editor.value)
+		}
 	case len(hidden) > 0:
 		label, action = "非表示の割り当てを確認…", s.hiddenAssignmentsDialog
 	case s.dirty || s.profilePath == "":
 		label, action = "JSON に保存…", s.save
 	case s.devices.Selected == "":
 		label, action = "USB を接続して再検出", s.scan
+		if len(s.devices.Options) > 0 {
+			label, action = "USB の接続先を選択する", func() { s.w.Canvas().Focus(s.devices) }
+		}
 	case s.usbFailed || s.usbTarget != s.devices.Selected || s.usbSignature != wireSignature(s.p):
 	case s.hasLauncher() && s.monitorStop == nil && !s.daemonRunning:
 		label, action = "ランチャー監視を再開", s.startMonitoring
@@ -113,7 +124,7 @@ func (s *studio) hiddenBindings(l devlayout.Layout) []protocol.Binding {
 func hiddenDescription(bindings []protocol.Binding) string {
 	var lines []string
 	for _, b := range bindings {
-		lines = append(lines, fmt.Sprintf("レイヤー %d / %s: %s", b.Layer, protocol.SlotName(b.Slot), b.DisplayValue()))
+		lines = append(lines, fmt.Sprintf("レイヤー %d / %s: %s", b.Layer, protocol.SlotName(b.Slot), bindingLabel(b)))
 	}
 	return strings.Join(lines, "\n")
 }

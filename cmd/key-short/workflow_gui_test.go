@@ -63,3 +63,24 @@ func TestMonitoringPauseReasonSurvivesRefresh(t *testing.T) {
 		t.Fatal("next action or offline edit not visible", s.nextAction.Text, s.connectionState.Text)
 	}
 }
+
+func TestOmittingAndDisablingAssignmentsHaveDifferentTransferData(t *testing.T) {
+	a := test.NewApp()
+	defer a.Quit()
+	s := newStudio(a)
+	defer s.shutdown()
+	s.editor.value.SetText("ctrl+c")
+	test.Tap(s.editor.remove)
+	if jobs, err := s.p.Jobs(); err != nil || len(jobs) != 0 {
+		t.Fatal("exclude generated a hardware clear", jobs, err)
+	}
+	s.undo()
+	test.Tap(s.editor.clear)
+	b, ok := s.p.Get(1, 1)
+	if !ok || b.Value != "none" {
+		t.Fatal("disable omitted the slot instead of sending none")
+	}
+	if jobs, err := s.p.Jobs(); err != nil || len(jobs) != 1 {
+		t.Fatal("disable did not generate transfer", err)
+	}
+}

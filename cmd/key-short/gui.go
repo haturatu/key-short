@@ -317,10 +317,7 @@ func (s *studio) refresh() {
 		if runes := []rune(value); len(runes) > 14 {
 			value = string(runes[:13]) + "…"
 		}
-		name := fmt.Sprintf("K%d", i+1)
-		if i >= 12 {
-			name = fmt.Sprintf("ノブ%d %s", (i-12)/3+1, []string{"左", "押す", "右"}[(i-12)%3])
-		}
+		name := s.inputName(i + 1)
 		if s.selectedSlots[i+1] {
 			name = "✓ " + name
 		}
@@ -346,7 +343,8 @@ func (s *studio) refresh() {
 	if s.hasDraft() {
 		draft = " · 入力エラーあり（作業中設定には未反映）"
 	}
-	s.count.SetText(fmt.Sprintf("%s · %d 件の割り当て%s", name, len(s.p.Bindings), draft))
+	l := s.p.EffectiveLayout()
+	s.count.SetText(fmt.Sprintf("%s · %dキー・%dノブ · %d 件の割り当て%s", name, len(l.Slots), len(l.Knobs), len(s.p.Bindings), draft))
 	state := "JSON 保存済み"
 	if s.profilePath == "" || s.dirty {
 		state = "JSON 未保存"
@@ -526,7 +524,7 @@ func (s *studio) preview() {
 }
 
 func (s *studio) write() {
-	if s.busy || s.hasDraft() {
+	if s.busy || s.autostartBusy || s.hasDraft() {
 		return
 	}
 	snapshot := s.p.Clone()
@@ -548,7 +546,7 @@ func (s *studio) write() {
 		if !ok {
 			return
 		}
-		if s.busy || s.hasDraft() || id != s.devices.Selected || profileSignature(snapshot) != profileSignature(s.p) {
+		if s.busy || s.autostartBusy || s.hasDraft() || id != s.devices.Selected || profileSignature(snapshot) != profileSignature(s.p) {
 			s.fail(fmt.Errorf("設定または対象デバイスが変わりました。確認し直してください"))
 			return
 		}

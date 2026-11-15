@@ -44,6 +44,9 @@ func TestVisualDragAndKnobOrientationRemainLocalUntilApplied(t *testing.T) {
 		t.Fatal(err)
 	}
 	s.applyLayout(e.draft)
+	if s.inputName(15) != "ノブ1 左" {
+		t.Fatal("knob label ignored reversed direction", s.inputName(15))
+	}
 	if s.p.EffectiveLayout().KnobPosition != "left" || s.usbSignature != "" {
 		t.Fatal("placement did not remain local")
 	}

@@ -20,6 +20,7 @@ type bindingEditor struct {
 	value                      *widget.SelectEntry
 	launch                     *launchEditor
 	remove, reset, record      *widget.Button
+	clear, search              *widget.Button
 	validation, details        *widget.Label
 	original                   protocol.Binding
 	dirty, valid, initializing bool
@@ -98,7 +99,7 @@ func (s *studio) newBindingEditor(layer, slot int) *bindingEditor {
 		}
 		e.validate()
 	})
-	clear := widget.NewButton("無効化（USB 反映で実機も解除）", func() {
+	e.clear = widget.NewButton("無効化を設定（USB 反映が必要）", func() {
 		if s.busy {
 			return
 		}
@@ -126,7 +127,8 @@ func (s *studio) newBindingEditor(layer, slot int) *bindingEditor {
 			s.activateSelection(layer, slot)
 		}
 	})
-	e.box = container.NewVBox(widget.NewLabelWithStyle(fmt.Sprintf("レイヤー %d / %s", layer, protocol.SlotName(slot)), fyne.TextAlignLeading, fyne.TextStyle{Bold: true}), widget.NewForm(widget.NewFormItem("操作の種類", e.kind)), valueForm, widget.NewButton("操作を検索…", e.searchOperations), e.record, note, e.launch.box, widget.NewAccordion(widget.NewAccordionItem("詳細（内部データ）", e.details)), e.validation, e.reset, clear, e.remove, wrappedLabel("除外は実機の設定を保持します。無効化は USB 反映後に実機の操作を解除します。"))
+	e.search = widget.NewButton("操作を検索…", e.searchOperations)
+	e.box = container.NewVBox(widget.NewLabelWithStyle(fmt.Sprintf("%s の編集 · レイヤー %d", s.inputName(slot), layer), fyne.TextAlignLeading, fyne.TextStyle{Bold: true}), widget.NewForm(widget.NewFormItem("操作の種類", e.kind)), valueForm, e.validation, container.NewGridWithColumns(2, e.search, e.record), note, e.launch.box, e.reset, widget.NewAccordion(widget.NewAccordionItem("割り当ての管理", container.NewVBox(e.clear, e.remove, wrappedLabel("除外は実機の設定を保持します。無効化は USB へ無操作のデータを送ります。転送後は実機で動作を確認してください。"))), widget.NewAccordionItem("詳細（内部データ）", e.details)))
 	if ok {
 		e.kind.SetSelected(map[string]string{"keyboard": "キーボード", "media": "メディア", "mouse": "マウス", "launcher": "ランチャー"}[existing.Kind])
 		value := existing.Value
@@ -158,7 +160,7 @@ func (e *bindingEditor) validate() {
 		return
 	}
 	binding := e.binding()
-	e.details.SetText(fmt.Sprintf("種類: %s / 値: %s", binding.Kind, binding.Value))
+	e.details.SetText(fmt.Sprintf("スロット: %d (%s)\n種類: %s / 値: %s", binding.Slot, protocol.SlotName(binding.Slot), binding.Kind, binding.Value))
 	e.dirty = !reflect.DeepEqual(e.original, binding)
 	q, err := e.s.p.WithBinding(binding)
 	e.valid = err == nil
@@ -181,7 +183,7 @@ func (e *bindingEditor) validate() {
 	e.s.refresh()
 }
 func (e *bindingEditor) updateControls() {
-	for _, c := range []fyne.Disableable{e.kind, e.value, e.record, e.reset, e.remove, e.launch.mode, e.launch.command, e.launch.label, e.launch.class, e.launch.dir, e.launch.reuse, e.launch.choose} {
+	for _, c := range []fyne.Disableable{e.kind, e.value, e.record, e.reset, e.remove, e.clear, e.search, e.launch.mode, e.launch.command, e.launch.label, e.launch.class, e.launch.dir, e.launch.reuse, e.launch.choose} {
 		if e.s.busy {
 			c.Disable()
 		} else {
@@ -192,6 +194,9 @@ func (e *bindingEditor) updateControls() {
 		e.launch.testButton.Disable()
 	} else {
 		e.launch.testButton.Enable()
+	}
+	if !e.dirty {
+		e.reset.Disable()
 	}
 	if _, ok := e.s.p.Get(e.layer, e.slot); !ok {
 		e.remove.Disable()

@@ -83,6 +83,11 @@ func (s *studio) duplicateAssignment() {
 	if s.busy || s.hasDraft() {
 		return
 	}
+	inputs := s.selectedInputs()
+	if len(inputs) != 1 {
+		s.status.SetText("複製するキーを1つ選択してください。")
+		return
+	}
 	l := s.p.EffectiveLayout()
 	slots := append([]int(nil), l.Slots...)
 	for _, k := range l.Knobs {
@@ -92,7 +97,7 @@ func (s *studio) duplicateAssignment() {
 		if _, ok := s.p.Get(s.layer, slot); ok {
 			continue
 		}
-		b, ok := s.p.Get(s.layer, s.selectedSlot)
+		b, ok := s.p.Get(s.layer, inputs[0])
 		if !ok {
 			return
 		}
@@ -103,6 +108,10 @@ func (s *studio) duplicateAssignment() {
 			return
 		}
 		s.p = q
+		s.selectedSlots = map[int]bool{}
+		if s.multiSelect.Checked {
+			s.selectedSlots[slot] = true
+		}
 		s.activateSelection(s.layer, slot)
 		s.changed()
 		return

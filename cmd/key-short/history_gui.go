@@ -28,7 +28,11 @@ func (s *studio) restoreHistory(redo bool) {
 		return
 	}
 	if s.hasDraft() {
-		s.activateSelection(s.layer, s.selectedSlot)
+		if !redo {
+			s.activateSelection(s.layer, s.selectedSlot)
+		} else {
+			s.status.SetText("入力エラーを修正するか入力を戻してから、やり直してください。")
+		}
 		return
 	}
 	source, dest := &s.undoStack, &s.redoStack
@@ -63,7 +67,7 @@ func (s *studio) updateHistoryControls() {
 	for _, item := range []struct {
 		button    *widget.Button
 		available bool
-	}{{s.undoButton, len(s.undoStack) > 0 || s.hasDraft()}, {s.redoButton, len(s.redoStack) > 0}} {
+	}{{s.undoButton, len(s.undoStack) > 0 || s.hasDraft()}, {s.redoButton, len(s.redoStack) > 0 && !s.hasDraft()}} {
 		if item.button == nil {
 			continue
 		}

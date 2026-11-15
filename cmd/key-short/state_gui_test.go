@@ -7,7 +7,9 @@ import (
 	"strings"
 	"testing"
 
+	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/test"
+	"fyne.io/fyne/v2/widget"
 	"key-short/internal/device"
 	devlayout "key-short/internal/layout"
 	"key-short/internal/profile"
@@ -136,5 +138,60 @@ func TestWireSignatureIgnoresLauncherMetadataAndDisplayOrder(t *testing.T) {
 	q.Layout = &l
 	if wireSignature(p) != wireSignature(q) || profileSignature(p) == profileSignature(q) {
 		t.Fatal("file and USB signatures conflated")
+	}
+}
+
+func TestJapaneseOperationLabelsKeepProtocolValues(t *testing.T) {
+	a := test.NewApp()
+	defer a.Quit()
+	s := newStudio(a)
+	defer s.shutdown()
+	s.editor.kind.SetSelected("メディア")
+	s.editor.value.SetText("音量を上げる")
+	b, ok := s.p.Get(1, 1)
+	if !ok || b.Kind != "media" || b.Value != "volume_up" {
+		t.Fatal("Japanese label leaked into protocol", b)
+	}
+	s.activateSelection(1, 1)
+	if s.editor.value.Text != "音量を上げる" {
+		t.Fatal("editor displayed internal operation name")
+	}
+	test.Tap(s.buttons[1])
+	s.editor.kind.SetSelected("マウス")
+	s.editor.value.SetText("左クリック")
+	b, ok = s.p.Get(1, 2)
+	if !ok || b.Kind != "mouse" || b.Value != "left_click" {
+		t.Fatal("mouse label did not map to protocol", b)
+	}
+}
+
+func TestOperationSearchUsesJapaneseAndAppliesChosenCategory(t *testing.T) {
+	a := test.NewApp()
+	defer a.Quit()
+	s := newStudio(a)
+	defer s.shutdown()
+	s.w.Show()
+	s.editor.searchOperations()
+	var search *widget.Entry
+	var list *widget.List
+	visitWidgets(s.w.Canvas().Overlays().Top(), func(o fyne.CanvasObject) {
+		if v, ok := o.(*widget.Entry); ok && v.PlaceHolder == "操作名・キー名で検索…" {
+			search = v
+		}
+		if v, ok := o.(*widget.List); ok {
+			list = v
+		}
+	})
+	if search == nil || list == nil {
+		t.Fatal("search controls missing")
+	}
+	search.SetText("音量を上げる")
+	if list.Length() != 1 {
+		t.Fatal("Japanese search failed", list.Length())
+	}
+	list.Select(0)
+	b, ok := s.p.Get(1, 1)
+	if !ok || b.Kind != "media" || b.Value != "volume_up" || s.hasDraft() {
+		t.Fatal("search selection failed", b)
 	}
 }
