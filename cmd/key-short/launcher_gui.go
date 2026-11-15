@@ -34,6 +34,7 @@ func (s *studio) launcherControls() fyne.CanvasObject {
 	s.monitorStatus.Wrapping = fyne.TextWrapWord
 	s.monitorButton = widget.NewButton("ランチャー監視を開始", func() {
 		if s.monitorStop != nil {
+			s.monitorPause = ""
 			s.stopMonitoring()
 		} else if s.daemonRunning {
 			s.manageAutostart("stop")
@@ -81,6 +82,7 @@ func (s *studio) startMonitoring() {
 		s.fail(err)
 		return
 	}
+	s.monitorPause = ""
 	s.monitorStop = stop
 	go func() {
 		err := <-done
@@ -90,7 +92,9 @@ func (s *studio) startMonitoring() {
 			}
 			s.stopMonitoring()
 			if err != nil {
-				s.monitorStatus.SetText("ランチャー停止 · " + err.Error())
+				s.monitorPause = "監視エラー: " + err.Error()
+				s.refreshMonitorState()
+				s.refreshWorkflow()
 			}
 		})
 	}()
@@ -107,8 +111,7 @@ func (s *studio) stopMonitoring() {
 		s.monitorStop = nil
 		stop()
 	}
-	s.monitorButton.SetText("ランチャー監視を開始")
-	s.monitorStatus.SetText("ランチャー停止中")
+	s.refreshMonitorState()
 	s.app.Preferences().SetBool("launcher-enabled", false)
 	s.refresh()
 }

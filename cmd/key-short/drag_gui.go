@@ -26,10 +26,21 @@ var _ fyne.Draggable = (*assignmentButton)(nil)
 
 func newAssignmentButton(s *studio, slot int) *assignmentButton {
 	b := &assignmentButton{studio: s, slot: slot}
-	b.OnTapped = func() { s.edit(slot) }
+	b.OnTapped = func() {
+		if s.multiSelect != nil && s.multiSelect.Checked {
+			s.selectedSlots[slot] = !s.selectedSlots[slot]
+			s.refresh()
+			return
+		}
+		s.edit(slot)
+		if s.workspace != nil && s.workspace.narrow {
+			s.workspace.tabs.SelectIndex(1)
+		}
+	}
 	b.ExtendBaseWidget(b)
 	return b
 }
+func (b *assignmentButton) MinSize() fyne.Size { return fyne.NewSize(100, 86) }
 func emptyAssignment(b protocol.Binding) bool {
 	return b.Kind == "keyboard" && strings.EqualFold(strings.TrimSpace(b.Value), "none")
 }
@@ -39,7 +50,7 @@ func (b *assignmentButton) Dragged(e *fyne.DragEvent) {
 		return
 	}
 	if s.hasDraft() {
-		s.status.SetText("キーの編集中の変更を適用するか戻してから、ドラッグしてください。")
+		s.status.SetText("入力エラーを修正するか入力を戻してから、ドラッグしてください。")
 		return
 	}
 	if !b.dragging {

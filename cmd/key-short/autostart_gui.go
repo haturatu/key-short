@@ -45,11 +45,11 @@ func (s *studio) manageAutostart(action string) {
 		return
 	}
 	if action == "enable" && (s.profilePath == "" || s.dirty || s.hasDraft()) {
-		s.fail(fmt.Errorf("キーの編集を適用し、JSON に保存してから自動起動を有効にしてください"))
+		s.fail(fmt.Errorf("有効な編集を JSON に保存してから自動起動を有効にしてください"))
 		return
 	}
-	if (action == "start" || action == "restart") && s.hasDraft() {
-		s.fail(fmt.Errorf("キーの編集を適用するか戻してから開始してください"))
+	if (action == "start" || action == "restart") && (s.hasDraft() || s.dirty || s.profilePath == "") {
+		s.fail(fmt.Errorf("有効な編集を JSON に保存してからデーモンを開始してください"))
 		return
 	}
 	if action == "start" || action == "restart" {
@@ -89,9 +89,16 @@ func (s *studio) manageAutostart(action string) {
 			s.updateAutostartControls()
 			if err != nil {
 				s.autostartStatus.SetText("自動起動の操作に失敗: " + err.Error())
+				if action == "stop" && s.daemonStopPending {
+					s.daemonStopError = err.Error()
+				}
 				return
 			}
 			s.daemonRunning = status.Running
+			if !status.Running {
+				s.daemonStopPending = false
+				s.daemonStopError = ""
+			}
 			state := "無効"
 			if status.Enabled {
 				state = "有効"
@@ -108,15 +115,13 @@ func (s *studio) manageAutostart(action string) {
 			if status.Enabled {
 				s.app.Preferences().SetBool("launcher-enabled", false)
 			}
-			if s.monitorStop == nil {
-				if status.Running {
-					s.monitorButton.SetText("監視デーモンを停止")
-					s.monitorStatus.SetText("ランチャー監視デーモン実行中")
-				} else {
-					s.monitorButton.SetText("ランチャー監視を開始")
-					s.monitorStatus.SetText("ランチャー停止中")
-				}
+			if status.Running && !s.daemonStopPending {
+				s.monitorPause = ""
 			}
+			if s.daemonStopPending && action != "stop" {
+				s.manageAutostart("stop")
+			}
+			s.refreshMonitorState()
 		})
 	}()
 }

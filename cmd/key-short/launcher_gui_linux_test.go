@@ -30,7 +30,7 @@ func TestInstalledApplicationPicker(t *testing.T) {
 	defer s.shutdown()
 	s.w.Show()
 	s.edit(1)
-	kind, add := s.editor.kind, s.editor.apply
+	kind := s.editor.kind
 	var choose *widget.Button
 	visitWidgets(s.editor.box, func(o fyne.CanvasObject) {
 		if b, ok := o.(*widget.Button); ok && b.Text == "アプリを選択…" {
@@ -62,7 +62,6 @@ func TestInstalledApplicationPicker(t *testing.T) {
 		t.Fatalf("search: %d results", list.Length())
 	}
 	list.Select(0)
-	test.Tap(add)
 	b, ok := s.p.Get(1, 1)
 	if !ok || b.Launch == nil || b.Launch.Mode != "application" || b.Launch.DesktopFile != path || b.Launch.Command != "" {
 		t.Fatalf("lost application selection: %+v", b)
@@ -77,14 +76,13 @@ func TestLauncherEditorSavesQuotedCommandAndReuseOption(t *testing.T) {
 	s.w.Show()
 	test.Tap(s.buttons[1])
 	kind, mode := s.editor.kind, s.editor.launch.mode
-	command, reuse, add := s.editor.launch.command, s.editor.launch.reuse, s.editor.apply
+	command, reuse := s.editor.launch.command, s.editor.launch.reuse
 	kind.SetSelected("ランチャー")
 	mode.SetSelected("コマンドラインで実行")
 	line := `chromium --remote-debugging-port=9222 --user-data-dir="/tmp/debug profile"`
 	command.SetText(line)
 	reuse.SetChecked(true)
 	screenshot(t, s.w, "launcher-editor.png")
-	test.Tap(add)
 	b, ok := s.p.Get(1, 2)
 	if !ok || b.Kind != "launcher" || b.Launch.Command != line || !b.Launch.ReuseWindow {
 		t.Fatalf("lost launcher configuration: %+v", b)

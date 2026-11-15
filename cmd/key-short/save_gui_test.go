@@ -81,14 +81,14 @@ func TestSaveAsNeverTruncatesBeforeConfirmedValidReplacement(t *testing.T) {
 		})
 	}
 }
-func TestDraftSelectionRequiresExplicitDiscard(t *testing.T) {
+func TestInvalidDraftSelectionRequiresExplicitDiscard(t *testing.T) {
 	a := test.NewApp()
 	defer a.Quit()
 	s := newStudio(a)
 	defer s.shutdown()
-	s.editor.value.SetText("ctrl+pageup")
+	s.editor.value.SetText("invalid-key")
 	test.Tap(s.buttons[1])
-	if s.selectedSlot != 1 || s.editor.value.Text != "ctrl+pageup" {
+	if s.selectedSlot != 1 || s.editor.value.Text != "invalid-key" {
 		t.Fatal("selection silently lost draft")
 	}
 	test.Tap(dialogButton(t, s, "編集を続ける"))
@@ -109,24 +109,23 @@ func TestCustomLayoutEditorChangesOnlyDisplayMapping(t *testing.T) {
 	s.w.Show()
 	s.applyLayout(devlayout.Presets()[1].Layout)
 	s.layoutDialog()
-	var slots *widget.Entry
+	var first, third *layoutTile
 	visitWidgets(s.w.Canvas().Overlays().Top(), func(o fyne.CanvasObject) {
-		if e, ok := o.(*widget.Entry); ok && e.PlaceHolder == "例: 3,6,2,5,1,4（左上から行順）" {
-			slots = e
+		if tile, ok := o.(*layoutTile); ok {
+			if tile.Text == "K1" {
+				first = tile
+			}
+			if tile.Text == "K3" {
+				third = tile
+			}
 		}
 	})
-	if slots == nil {
-		t.Fatal("mapping entry missing")
+	if first == nil || third == nil {
+		t.Fatal("visual layout tiles missing")
 	}
+	test.Tap(first)
+	test.Tap(third)
 	apply := dialogButton(t, s, "この配置を使う")
-	slots.SetText("3,3")
-	if !apply.Disabled() {
-		t.Fatal("duplicate slot can be applied")
-	}
-	slots.SetText("3,6,2,5,1,4")
-	if apply.Disabled() {
-		t.Fatal("valid slot order rejected")
-	}
 	screenshot(t, s.w, "layout.png")
 	test.Tap(apply)
 	if s.p.EffectiveLayout().Slots[0] != 3 || s.p.EffectiveLayout().Columns != 2 || len(s.p.Bindings) != 0 || s.usbSignature != "" {

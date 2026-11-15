@@ -100,7 +100,7 @@ func TestGUIRequiresSavedProfileBeforeEnablingAutostart(t *testing.T) {
 	defer s.shutdown()
 	s.editor.value.SetText("ctrl+pageup")
 	s.manageAutostart("enable")
-	if s.autostartBusy || !s.hasDraft() || s.w.Canvas().Overlays().Top() == nil {
+	if s.autostartBusy || !s.dirty || s.w.Canvas().Overlays().Top() == nil {
 		t.Fatal("unsaved profile registered or draft lost")
 	}
 }

@@ -33,21 +33,19 @@ func TestEditorRejectsInvalidAndSavesKnob2(t *testing.T) {
 	if s.w.Canvas().Overlays().Top() != nil {
 		t.Fatal("key selection opened a modal")
 	}
-	value, add := s.editor.value, s.editor.apply
+	value := s.editor.value
 	value.SetText("invalid-key")
-	if !add.Disabled() {
+	if s.editor.valid {
 		t.Fatal("invalid binding can be applied")
 	}
-	test.Tap(add)
 	if len(s.p.Bindings) != 0 {
 		t.Fatal("invalid binding was stored")
 	}
 	value.SetText("ctrl+shift+s")
-	if !s.hasDraft() || len(s.p.Bindings) != 0 || !s.saveButton.Disabled() {
+	if s.hasDraft() || len(s.p.Bindings) != 1 || s.saveButton.Disabled() {
 		t.Fatal("draft mutated applied state or can be saved")
 	}
 	screenshot(t, s.w, "editor.png")
-	test.Tap(add)
 	b, ok := s.p.Get(1, 18)
 	if !ok || b.Value != "ctrl+shift+s" {
 		t.Fatalf("knob 2 not stored: %+v", s.p)
