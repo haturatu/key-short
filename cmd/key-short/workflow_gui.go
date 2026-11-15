@@ -75,19 +75,22 @@ func (s *studio) refreshWorkflow() {
 		s.hiddenButton.SetText(fmt.Sprintf("非表示の割り当て %d 件を確認…", len(hidden)))
 		s.hiddenButton.Show()
 	}
+	focusEditor := func() {
+		if s.workspace != nil && s.workspace.narrow {
+			s.workspace.tabs.SelectIndex(1)
+		}
+		s.w.Canvas().Focus(s.editor.value)
+	}
 	label, action := "USB に反映…", s.write
 	switch {
 	case s.busy:
 		label, action = "USB 転送中…", nil
 	case s.hasDraft():
-		label, action = "入力エラーを修正する", func() {
-			if s.workspace != nil && s.workspace.narrow {
-				s.workspace.tabs.SelectIndex(1)
-			}
-			s.w.Canvas().Focus(s.editor.value)
-		}
+		label, action = "入力エラーを修正する", focusEditor
 	case len(hidden) > 0:
 		label, action = "非表示の割り当てを確認…", s.hiddenAssignmentsDialog
+	case len(s.p.Bindings) == 0 && s.p.LED == nil && !s.dirty && s.profilePath == "":
+		label, action = "キーを選んで割り当てを設定", focusEditor
 	case s.dirty || s.profilePath == "":
 		label, action = "JSON に保存…", s.save
 	case s.devices.Selected == "":

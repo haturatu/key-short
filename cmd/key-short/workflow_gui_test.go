@@ -84,3 +84,24 @@ func TestOmittingAndDisablingAssignmentsHaveDifferentTransferData(t *testing.T) 
 		t.Fatal("disable did not generate transfer", err)
 	}
 }
+
+func TestEmptyOfflineProfileGuidesEditingBeforeSaving(t *testing.T) {
+	a := test.NewApp()
+	defer a.Quit()
+	s := newStudio(a)
+	defer s.shutdown()
+	s.devices.Options = nil
+	s.devices.ClearSelected()
+	s.refresh()
+	if s.nextAction.Text != "キーを選んで割り当てを設定" {
+		t.Fatal("empty profile suggests saving before editing", s.nextAction.Text)
+	}
+	test.Tap(s.nextAction)
+	if s.w.Canvas().Focused() != s.editor.value {
+		t.Fatal("next action did not focus editor")
+	}
+	s.editor.value.SetText("ctrl+c")
+	if !strings.Contains(s.nextAction.Text, "JSON") {
+		t.Fatal("valid offline edit did not guide saving")
+	}
+}
