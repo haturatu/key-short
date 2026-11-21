@@ -16,7 +16,6 @@ import (
 	"fyne.io/fyne/v2/app"
 	"fyne.io/fyne/v2/container"
 	"fyne.io/fyne/v2/dialog"
-	"fyne.io/fyne/v2/layout"
 	"fyne.io/fyne/v2/storage"
 	"fyne.io/fyne/v2/theme"
 	"fyne.io/fyne/v2/widget"
@@ -71,6 +70,18 @@ type studio struct {
 	autostartBackend                       *widget.Select
 	autostartWidgets                       []fyne.Disableable
 	autostartBusy, daemonRunning           bool
+	historyCurrent                         profile.Profile
+	undoStack, redoStack                   []profile.Profile
+	undoButton, redoButton                 *widget.Button
+	nextAction                             *compactButton
+	editState, connectionState             *widget.Label
+	monitorPause                           string
+	hiddenButton                           *widget.Button
+	selectedSlots                          map[int]bool
+	multiSelect                            *widget.Check
+	workspace                              *workspaceLayout
+	daemonStopPending                      bool
+	daemonStopError                        string
 }
 
 func runGUI(profilePath string) error {
@@ -117,13 +128,18 @@ func runGUI(profilePath string) error {
 
 func newStudio(a fyne.App) *studio {
 	ctx, cancel := context.WithCancel(context.Background())
-	s := &studio{app: a, ctx: ctx, cancel: cancel, w: a.NewWindow("Key Short"), p: profile.New(), layer: 1, selectedSlot: 1, loading: true}
-	s.w.Resize(fyne.NewSize(1180, 860))
-	s.status = widget.NewLabel("キーを選び、右側で編集して適用してください。USB への送信は別の操作です。")
+	s := &studio{app: a, ctx: ctx, cancel: cancel, w: a.NewWindow("Key Short"), p: profile.New(), layer: 1, selectedSlot: 1, loading: true, selectedSlots: map[int]bool{}}
+	s.w.Resize(fyne.NewSize(1180, 680))
+	s.status = widget.NewLabel("キーを選んで編集してください。有効な変更は自動反映します。")
 	s.status.Wrapping = fyne.TextWrapWord
 	s.count = widget.NewLabel("")
+	s.count.Wrapping = fyne.TextWrapWord
 	s.jsonState = widget.NewLabel("")
 	s.usbState = widget.NewLabel("")
+	s.editState = widget.NewLabel("")
+	s.editState.Wrapping = fyne.TextWrapWord
+	s.connectionState = widget.NewLabel("")
+	s.connectionState.Wrapping = fyne.TextWrapWord
 	s.jsonState.Wrapping = fyne.TextWrapWord
 	s.usbState.Wrapping = fyne.TextWrapWord
 	s.devices = widget.NewSelect(nil, func(string) {
@@ -163,8 +179,9 @@ func newStudio(a fyne.App) *studio {
 		s.layouts.Options = append(s.layouts.Options, preset.Name)
 	}
 	s.layouts.Options = append(s.layouts.Options, "カスタム配置…")
-	custom := widget.NewButton("スロットの並びを調整…", s.layoutDialog)
-	s.keyHost = container.NewVBox()
+	custom := widget.NewButton("配置を変更…", s.layoutDialog)
+	s.multiSelect = widget.NewCheck("複数選択", func(bool) { s.selectedSlots = map[int]bool{}; s.refresh() })
+	s.keyHost = container.NewStack()
 	s.led = widget.NewSelect([]string{"変更しない", "0 · 消灯", "1 · モード1", "2 · モード2"}, func(v string) {
 		if s.loading {
 			return
@@ -179,32 +196,61 @@ func newStudio(a fyne.App) *studio {
 	})
 	s.led.SetSelectedIndex(0)
 	launchControls := s.launcherControls()
-	note := widget.NewLabel("割り当てをドラッグして別のキーへ移動できます。配置の変更だけでは USB に書き込みません。")
-	note.Wrapping = fyne.TextWrapWord
 	s.layoutNote = widget.NewLabel("機種未確定 · 配置を選択してください。")
 	s.layoutNote.Wrapping = fyne.TextWrapWord
-	keyArea := container.NewVBox(widget.NewLabelWithStyle("キー配置", fyne.TextAlignLeading, fyne.TextStyle{Bold: true}), s.layouts, custom, s.layoutNote, note, s.keyHost,
-		widget.NewAccordion(widget.NewAccordionItem("LED・ランチャー設定", container.NewVBox(widget.NewLabel("LED"), s.led, launchControls))))
-	s.editorHost = container.NewVBox()
-	s.keyScroll = container.NewVScroll(keyArea)
-	split := container.NewHSplit(container.NewPadded(s.keyScroll), container.NewPadded(container.NewVScroll(s.editorHost)))
-	split.Offset = 0.48
+	s.undoButton = widget.NewButtonWithIcon("戻す", theme.ContentUndoIcon(), s.undo)
+	s.redoButton = widget.NewButtonWithIcon("やり直す", theme.ContentRedoIcon(), s.redo)
+	copy := widget.NewButtonWithIcon("コピー", theme.ContentCopyIcon(), s.copyAssignments)
+	paste := widget.NewButtonWithIcon("貼り付け", theme.ContentPasteIcon(), s.pasteAssignments)
+	duplicate := widget.NewButton("複製", s.duplicateAssignment)
+	s.controls = append(s.controls, s.multiSelect, copy, paste, duplicate)
+	settings := widget.NewButtonWithIcon("設定…", theme.SettingsIcon(), func() {
+		d := dialog.NewCustom("LED・ランチャー・自動起動の設定", "閉じる", container.NewVScroll(container.NewVBox(widget.NewLabel("LED"), s.led, launchControls)), s.w)
+		d.Resize(fyne.NewSize(600, 620))
+		d.Show()
+	})
+	s.controls = append(s.controls, settings)
+	help := widget.NewButton("操作のヒント…", s.showEditingHelp)
+	keyArea := container.NewBorder(container.NewVBox(container.NewBorder(nil, nil, nil, custom, s.layouts), container.NewHBox(s.multiSelect, copy, paste, duplicate)), nil, nil, nil, s.keyHost)
+	s.editorHost = container.NewStack()
+	s.keyScroll = container.NewScroll(keyArea)
+	s.keyScroll.Direction = container.ScrollNone
+	split, workspace := newWorkspace(container.NewPadded(s.keyScroll), container.NewPadded(s.editorHost))
+	s.workspace = workspace
 	open := widget.NewButtonWithIcon("JSON を開く", theme.FolderOpenIcon(), s.open)
 	s.saveButton = widget.NewButtonWithIcon("保存", theme.DocumentSaveIcon(), s.save)
 	saveAs := widget.NewButton("別名で保存", s.saveAs)
 	s.saveAsButton = saveAs
 	s.previewButton = widget.NewButton("送信データを確認", s.preview)
-	s.writeButton = widget.NewButtonWithIcon("USB に書き込む", theme.UploadIcon(), s.write)
-	s.writeButton.Importance = widget.HighImportance
+	s.writeButton = widget.NewButtonWithIcon("USB に反映…", theme.UploadIcon(), s.write)
+	s.nextAction = newCompactButton("", nil)
+	s.nextAction.Importance = widget.HighImportance
+	s.hiddenButton = widget.NewButton("非表示の割り当てを確認…", s.hiddenAssignmentsDialog)
 	s.controls = append(s.controls, s.devices, rescan, s.layers, s.layouts, custom, s.led, open, s.saveButton, saveAs, s.previewButton, s.writeButton)
 	s.progress = widget.NewProgressBar()
 	s.progress.Hide()
-	header := container.NewVBox(container.NewBorder(nil, nil, widget.NewLabelWithStyle("Key Short", fyne.TextAlignLeading, fyne.TextStyle{Bold: true}), s.layers, container.NewBorder(nil, nil, nil, rescan, s.devices)), s.count)
-	footer := container.NewVBox(container.NewGridWithColumns(3, s.jsonState, s.usbState, s.monitorStatus), container.NewHBox(open, s.previewButton, layout.NewSpacer(), saveAs, s.saveButton, s.writeButton), s.progress, s.status)
+	header := container.NewVBox(container.NewBorder(nil, nil, widget.NewLabelWithStyle("Key Short", fyne.TextAlignLeading, fyne.TextStyle{Bold: true}), container.NewHBox(s.layers, settings), container.NewBorder(nil, nil, nil, rescan, s.devices)), container.NewBorder(nil, nil, nil, container.NewHBox(s.undoButton, s.redoButton, help), s.count))
+	fileActions := widget.NewButton("ファイル操作…", func() {
+		var d dialog.Dialog
+		action := func(label string, run func()) *widget.Button {
+			return widget.NewButton(label, func() { d.Hide(); run() })
+		}
+		d = dialog.NewCustom("ファイル・送信データ", "閉じる", container.NewVBox(action("JSON を開く…", s.open), action("別名で保存…", s.saveAs), action("送信データを確認…", s.preview)), s.w)
+		d.Show()
+	})
+	s.controls = append(s.controls, fileActions)
+	for _, label := range []*widget.Label{s.count, s.status, s.editState, s.jsonState, s.usbState, s.monitorStatus} {
+		label.Wrapping = fyne.TextWrapOff
+		label.Truncation = fyne.TextTruncateEllipsis
+	}
+	stateDetails := widget.NewButton("状態の詳細…", s.showWorkflowDetails)
+	footer := container.NewVBox(container.NewBorder(nil, nil, nil, stateDetails, container.NewGridWithColumns(4, s.editState, s.jsonState, s.usbState, s.monitorStatus)), container.NewBorder(nil, nil, nil, container.NewHBox(fileActions, s.saveButton, s.writeButton), s.nextAction), s.progress, s.status)
 	s.w.SetContent(container.NewPadded(container.NewBorder(header, footer, nil, nil, split)))
 	s.w.SetCloseIntercept(func() { s.requestClose(false) })
+	s.installShortcuts()
 	s.loading = false
 	s.savedSignature = profileSignature(s.p)
+	s.resetHistory()
 	s.activateSelection(1, 1)
 	s.rebuildLayout()
 	s.refresh()
@@ -261,31 +307,32 @@ func wireSignature(p profile.Profile) string {
 }
 func (s *studio) hasDraft() bool { return s.editor != nil && s.editor.dirty }
 func (s *studio) changed() {
-	if s.daemonRunning && !s.autostartBusy {
-		s.manageAutostart("stop")
-	}
-	if s.monitorStop != nil {
-		s.stopMonitoring()
-		s.monitorStatus.SetText("ランチャー停止中 · 設定変更のため停止")
-	}
+	s.recordHistory()
+	s.pauseMonitoring("設定変更により一時停止中")
 	s.dirty = profileSignature(s.p) != s.savedSignature
 	s.refresh()
-	if s.editor != nil {
-		s.editor.validate()
-	}
 }
 func (s *studio) refresh() {
 	for i, b := range s.buttons {
 		value := "未設定"
-		if binding, ok := s.p.Get(s.layer, i+1); ok {
-			value = binding.DisplayValue()
+		binding, assigned := s.p.Get(s.layer, i+1)
+		if assigned {
+			value = bindingLabel(binding)
 		}
-		if runes := []rune(value); len(runes) > 22 {
-			value = string(runes[:21]) + "…"
+		if runes := []rune(value); len(runes) > 14 {
+			value = string(runes[:13]) + "…"
 		}
-		b.SetText(protocol.SlotName(i+1) + "\n" + value)
+		name := s.inputName(i + 1)
+		if s.selectedSlots[i+1] {
+			name = "✓ " + name
+		}
+		b.SetText(name + "\n" + value)
+		b.SetIcon(bindingIcon(binding, assigned))
 		b.Importance = widget.MediumImportance
-		if s.selectedSlot == i+1 {
+		if assigned && !emptyAssignment(binding) {
+			b.Importance = widget.SuccessImportance
+		}
+		if s.selectedSlot == i+1 || s.selectedSlots[i+1] {
 			b.Importance = widget.HighImportance
 		}
 		if s.dragTarget == i+1 {
@@ -299,9 +346,10 @@ func (s *studio) refresh() {
 	}
 	draft := ""
 	if s.hasDraft() {
-		draft = " · キーに未適用の変更あり"
+		draft = " · 入力エラーあり（作業中設定には未反映）"
 	}
-	s.count.SetText(fmt.Sprintf("%s · %d 件の割り当て%s", name, len(s.p.Bindings), draft))
+	l := s.p.EffectiveLayout()
+	s.count.SetText(fmt.Sprintf("%s · %dキー・%dノブ · %d 件の割り当て%s", name, len(l.Slots), len(l.Knobs), len(s.p.Bindings), draft))
 	state := "JSON 保存済み"
 	if s.profilePath == "" || s.dirty {
 		state = "JSON 未保存"
@@ -311,7 +359,7 @@ func (s *studio) refresh() {
 	if s.usbSignature != "" && s.usbTarget == s.devices.Selected {
 		usb = "USB 未反映の変更あり"
 		if s.usbSignature == wireSignature(s.p) {
-			usb = "USB 送信済み · 実機未検証"
+			usb = "USB 転送完了・実機動作未確認"
 		}
 	}
 	if s.usbFailed && s.usbFailedTarget == s.devices.Selected {
@@ -359,6 +407,9 @@ func (s *studio) refresh() {
 	if s.editor != nil {
 		s.editor.updateControls()
 	}
+	s.refreshMonitorState()
+	s.refreshWorkflow()
+	s.updateHistoryControls()
 	s.updateAutostartControls()
 	if s.w.Content() != nil {
 		s.w.Content().Refresh()
@@ -402,7 +453,7 @@ func (s *studio) scan() {
 	s.deviceSelected()
 	s.refresh()
 	if len(options) == 0 {
-		s.status.SetText("1189:8890 が見つかりません。USB を接続し、再検出してください。")
+		s.status.SetText("USB 未接続 · オフラインで配置・割り当てを編集し、JSON に保存できます。")
 	} else {
 		s.status.SetText("USB を検出しました。キーまたはノブを選んで編集できます。")
 	}
@@ -478,7 +529,7 @@ func (s *studio) preview() {
 }
 
 func (s *studio) write() {
-	if s.busy || s.hasDraft() {
+	if s.busy || s.autostartBusy || s.hasDraft() {
 		return
 	}
 	snapshot := s.p.Clone()
@@ -500,9 +551,13 @@ func (s *studio) write() {
 		if !ok {
 			return
 		}
-		if s.busy || s.hasDraft() || id != s.devices.Selected || profileSignature(snapshot) != profileSignature(s.p) {
+		if s.busy || s.autostartBusy || s.hasDraft() || id != s.devices.Selected || profileSignature(snapshot) != profileSignature(s.p) {
 			s.fail(fmt.Errorf("設定または対象デバイスが変わりました。確認し直してください"))
 			return
+		}
+		if s.monitorStop != nil {
+			s.monitorPause = "USB 転送のため一時停止中"
+			s.stopMonitoring()
 		}
 		s.busy = true
 		s.refresh()
@@ -510,6 +565,7 @@ func (s *studio) write() {
 		s.progress.Show()
 		s.status.SetText("設定データを送信しています…")
 		go func() {
+			daemonStopped := false
 			var err error
 			if s.autostartStatus != nil {
 				m, e := autostart.New()
@@ -518,6 +574,7 @@ func (s *studio) write() {
 				} else {
 					ctx, cancel := context.WithTimeout(s.ctx, 20*time.Second)
 					err = m.Stop(ctx)
+					daemonStopped = err == nil
 					cancel()
 				}
 			}
@@ -528,6 +585,10 @@ func (s *studio) write() {
 			}
 			fyne.Do(func() {
 				s.busy = false
+				if daemonStopped {
+					s.daemonRunning = false
+					s.daemonStopPending = false
+				}
 
 				s.progress.Hide()
 				s.usbFailed = err != nil

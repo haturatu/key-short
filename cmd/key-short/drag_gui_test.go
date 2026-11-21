@@ -104,7 +104,7 @@ func TestDragCancelBusyDraftAndStaleConfirmation(t *testing.T) {
 	if profileSignature(s.p) != before {
 		t.Fatal("drag during USB write changed profile")
 	}
-	s.editor.value.SetText("b")
+	s.editor.value.SetText("invalid-key")
 	dragAssignment(s, 1, assignmentCenter(s, 2))
 	if profileSignature(s.p) != before || !s.hasDraft() {
 		t.Fatal("drag discarded pending editor changes")

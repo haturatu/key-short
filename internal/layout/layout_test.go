@@ -31,3 +31,18 @@ func TestPresetSlots(t *testing.T) {
 		t.Fatal("clone shares slots")
 	}
 }
+
+func TestKnobPositionValidation(t *testing.T) {
+	for _, position := range []string{"", "top", "bottom", "left", "right"} {
+		l := Default()
+		l.KnobPosition = position
+		if err := l.Validate(); err != nil {
+			t.Fatal(position, err)
+		}
+	}
+	l := Default()
+	l.KnobPosition = "unknown"
+	if l.Validate() == nil {
+		t.Fatal("accepted unknown knob position")
+	}
+}

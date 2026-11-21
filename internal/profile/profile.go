@@ -57,7 +57,7 @@ func (p Profile) WithBinding(b protocol.Binding) (Profile, error) {
 		b.Launch = &spec
 	}
 	q.Set(b)
-	if _, err := q.Jobs(); err != nil {
+	if err := q.Validate(); err != nil {
 		return Profile{}, err
 	}
 	return q, nil

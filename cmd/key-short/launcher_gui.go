@@ -9,7 +9,6 @@ import (
 	"fyne.io/fyne/v2/container"
 	"fyne.io/fyne/v2/dialog"
 	fynedesktop "fyne.io/fyne/v2/driver/desktop"
-	"fyne.io/fyne/v2/layout"
 	"fyne.io/fyne/v2/widget"
 	"key-short/internal/desktop"
 	"key-short/internal/host"
@@ -34,6 +33,7 @@ func (s *studio) launcherControls() fyne.CanvasObject {
 	s.monitorStatus.Wrapping = fyne.TextWrapWord
 	s.monitorButton = widget.NewButton("ランチャー監視を開始", func() {
 		if s.monitorStop != nil {
+			s.monitorPause = ""
 			s.stopMonitoring()
 		} else if s.daemonRunning {
 			s.manageAutostart("stop")
@@ -81,6 +81,7 @@ func (s *studio) startMonitoring() {
 		s.fail(err)
 		return
 	}
+	s.monitorPause = ""
 	s.monitorStop = stop
 	go func() {
 		err := <-done
@@ -90,7 +91,9 @@ func (s *studio) startMonitoring() {
 			}
 			s.stopMonitoring()
 			if err != nil {
-				s.monitorStatus.SetText("ランチャー停止 · " + err.Error())
+				s.monitorPause = "監視エラー: " + err.Error()
+				s.refreshMonitorState()
+				s.refreshWorkflow()
 			}
 		})
 	}()
@@ -107,8 +110,7 @@ func (s *studio) stopMonitoring() {
 		s.monitorStop = nil
 		stop()
 	}
-	s.monitorButton.SetText("ランチャー監視を開始")
-	s.monitorStatus.SetText("ランチャー停止中")
+	s.refreshMonitorState()
 	s.app.Preferences().SetBool("launcher-enabled", false)
 	s.refresh()
 }
@@ -201,11 +203,9 @@ func (s *studio) newLaunchEditor(initial *protocol.LaunchSpec, label string) *la
 		if v == "アプリを選択" {
 			appBox.Show()
 			commandBox.Hide()
-			commandHelp.Hide()
 		} else {
 			appBox.Hide()
 			commandBox.Show()
-			commandHelp.Show()
 		}
 		if e.box != nil {
 			e.box.Refresh()
@@ -216,14 +216,20 @@ func (s *studio) newLaunchEditor(initial *protocol.LaunchSpec, label string) *la
 	})
 	e.class.SetPlaceHolder("通常は空欄。必要な場合のみ WM_CLASS / resourceClass")
 	e.dir.SetPlaceHolder("通常は空欄。指定する場合は絶対パス")
-	advanced := widget.NewAccordion(widget.NewAccordionItem("詳細設定", widget.NewForm(widget.NewFormItem("ウィンドウクラス", e.class), widget.NewFormItem("作業フォルダー", e.dir))))
+	advanced := widget.NewButton("詳細設定…", func() {
+		d := dialog.NewCustom("ランチャーの詳細設定", "閉じる", container.NewVBox(widget.NewForm(widget.NewFormItem("ウィンドウクラス", e.class), widget.NewFormItem("作業フォルダー", e.dir)), commandHelp), s.w)
+		d.Resize(fyne.NewSize(580, 280))
+		d.Show()
+	})
 	message := widget.NewLabel("")
 	message.Wrapping = fyne.TextWrapWord
+	message.Hide()
 	var testButton *widget.Button
 	testButton = widget.NewButton("起動をテスト", func() {
 		if s.busy {
 			return
 		}
+		message.Show()
 		spec := e.spec()
 		if err := spec.Validate(); err != nil {
 			message.SetText(err.Error())
@@ -259,7 +265,7 @@ func (s *studio) newLaunchEditor(initial *protocol.LaunchSpec, label string) *la
 	})
 	e.choose = choose
 	e.testButton = testButton
-	e.box = container.NewVBox(widget.NewForm(widget.NewFormItem("起動方法", e.mode), widget.NewFormItem("表示名", e.label)), appBox, commandBox, commandHelp, e.reuse, advanced, container.NewHBox(testButton, layout.NewSpacer()), message)
+	e.box = container.NewVBox(widget.NewForm(widget.NewFormItem("起動方法", e.mode), widget.NewFormItem("表示名", e.label)), appBox, commandBox, e.reuse, container.NewGridWithColumns(2, testButton, advanced), message)
 	if initial != nil {
 		e.command.SetText(initial.Command)
 		e.reuse.SetChecked(initial.ReuseWindow)

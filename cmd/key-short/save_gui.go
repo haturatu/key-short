@@ -19,7 +19,7 @@ func (s *studio) saveSnapshot(path string, snapshot profile.Profile) error {
 		return fmt.Errorf("USB への送信完了を待ってください")
 	}
 	if s.hasDraft() {
-		return fmt.Errorf("キーの変更を適用してから保存してください")
+		return fmt.Errorf("入力エラーを修正するか入力を戻してから保存してください")
 	}
 	if err := s.p.Validate(); err != nil {
 		return err
@@ -50,7 +50,7 @@ func (s *studio) saveSnapshot(path string, snapshot profile.Profile) error {
 
 func (s *studio) save() {
 	if s.hasDraft() {
-		s.fail(fmt.Errorf("キーの変更を適用してから保存してください"))
+		s.fail(fmt.Errorf("入力エラーを修正するか入力を戻してから保存してください"))
 		return
 	}
 	if err := s.p.Validate(); err != nil {
@@ -68,7 +68,7 @@ func (s *studio) save() {
 
 func (s *studio) saveAs() {
 	if s.busy || s.hasDraft() {
-		s.fail(fmt.Errorf("編集内容を適用し、USB 送信が終わってから保存してください"))
+		s.fail(fmt.Errorf("入力エラーを修正し、USB 送信が終わってから保存してください"))
 		return
 	}
 	if err := s.p.Validate(); err != nil {

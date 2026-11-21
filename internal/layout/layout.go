@@ -10,10 +10,11 @@ type Knob struct {
 	Right int `json:"right"`
 }
 type Layout struct {
-	Preset  string `json:"preset"`
-	Columns int    `json:"columns"`
-	Slots   []int  `json:"slots"`
-	Knobs   []Knob `json:"knobs"`
+	KnobPosition string `json:"knob_position,omitempty"`
+	Preset       string `json:"preset"`
+	Columns      int    `json:"columns"`
+	Slots        []int  `json:"slots"`
+	Knobs        []Knob `json:"knobs"`
 }
 type Preset struct {
 	ID, Name string
@@ -67,6 +68,11 @@ func (l Layout) Contains(slot int) bool {
 	return false
 }
 func (l Layout) Validate() error {
+	switch l.KnobPosition {
+	case "", "top", "bottom", "left", "right":
+	default:
+		return fmt.Errorf("ノブの位置は上下左右から選んでください")
+	}
 	if l.Columns < 1 || l.Columns > 12 || len(l.Slots) < 1 || len(l.Slots) > 12 || len(l.Knobs) > 2 {
 		return fmt.Errorf("配置は1〜12キー、0〜2ノブ、1〜12列で指定してください")
 	}
